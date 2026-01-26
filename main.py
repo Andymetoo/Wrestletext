@@ -55,13 +55,13 @@ class GameEngine:
         # Log
         self.log_frame = tk.Frame(self.root, bg="black", bd=2, relief="sunken")
         self.log_frame.pack(fill="both", expand=True, padx=5, pady=5)
-        self.log_text = tk.Text(self.log_frame, bg="black", fg="#0f0", font=("Courier New", 12), state="disabled", height=8)
+        self.log_text = tk.Text(self.log_frame, bg="black", fg="#0f0", font=("Courier New", 12), state="disabled", height=10)
         self.log_text.pack(fill="both", expand=True)
 
         # QTE Bar
         self.qte_frame = tk.Frame(self.root, bg="#222", pady=5)
         self.qte_frame.pack(fill="x", padx=10)
-        tk.Label(self.qte_frame, text="TIMING BAR", fg="#888", bg="#222", font=("Arial", 8)).pack()
+        tk.Label(self.qte_frame, text="TIMING BAR (Hit Green Zone 70-95%)", fg="#888", bg="#222", font=("Arial", 8)).pack()
         self.qte_bar = ttk.Progressbar(self.qte_frame, length=300, maximum=100)
         self.qte_bar.pack(fill="x")
 
@@ -134,6 +134,8 @@ class GameEngine:
         
         self.buttons["btn_11"].config(text="TAUNT", bg="#444", fg="white", state="normal", 
                                       command=self.attempt_taunt)
+        self.buttons["btn_20"].config(text="REST\n(+Stamina)", bg="#444", fg="white", state="normal",
+                          command=lambda: self.log("You circle and breathe..."))
 
     # --- STATE: GRAPPLE ---
     def player_wins_control(self):
