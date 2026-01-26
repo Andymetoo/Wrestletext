@@ -27,6 +27,7 @@ class TacticalWrestlingApp:
         self.game_over = False
         self._player_bonus_available = False
         self._in_grapple_followup_picker = False
+        self._last_turn_banner: str | None = None
 
         self._build_ui()
         self._log("Match start. Win only by Pinfall or Submission.")
@@ -61,38 +62,41 @@ class TacticalWrestlingApp:
         )
         self.state_line.pack(fill="x", pady=(4, 8))
 
+        # Bars (use grid so both sides stay centered/aligned)
         bars = tk.Frame(self.hud, bg="#1b1b1b")
         bars.pack(fill="x")
+        bars.columnconfigure(0, weight=1, uniform="col")
+        bars.columnconfigure(1, weight=1, uniform="col")
 
         # Player side
         left = tk.Frame(bars, bg="#1b1b1b")
-        left.pack(side="left", fill="x", expand=True)
+        left.grid(row=0, column=0, sticky="ew", padx=(0, 6))
         tk.Label(left, text="YOU", fg="#67ff8a", bg="#1b1b1b", font=("Impact", 10)).pack(anchor="w")
         self.p_hp = ttk.Progressbar(left, maximum=MAX_HEALTH)
-        self.p_hp.pack(fill="x", padx=(0, 8))
+        self.p_hp.pack(fill="x")
         self.p_grit = ttk.Progressbar(left, maximum=self.player.max_grit)
-        self.p_grit.pack(fill="x", padx=(0, 8), pady=(4, 0))
-        self.p_hype = ttk.Progressbar(left, maximum=100, style="Hype.TProgressbar")
-        self.p_hype.pack(fill="x", padx=(0, 8), pady=(4, 0))
+        self.p_grit.pack(fill="x", pady=(4, 0))
+        self.p_hype = ttk.Progressbar(left, maximum=100, style="Horizontal.Hype.TProgressbar")
+        self.p_hype.pack(fill="x", pady=(4, 0))
         self.p_nums = tk.Label(left, text="", fg="#aaa", bg="#1b1b1b", font=("Arial", 9))
         self.p_nums.pack(anchor="w", pady=(2, 0))
         self.p_limbs = tk.Label(left, text="", fg="#aaa", bg="#1b1b1b", font=("Arial", 9))
-        self.p_limbs.pack(anchor="w", pady=(0, 0))
+        self.p_limbs.pack(anchor="w")
 
         # CPU side
         right = tk.Frame(bars, bg="#1b1b1b")
-        right.pack(side="right", fill="x", expand=True)
+        right.grid(row=0, column=1, sticky="ew", padx=(6, 0))
         tk.Label(right, text="CPU", fg="#ff6b6b", bg="#1b1b1b", font=("Impact", 10)).pack(anchor="e")
         self.c_hp = ttk.Progressbar(right, maximum=MAX_HEALTH)
-        self.c_hp.pack(fill="x", padx=(8, 0))
+        self.c_hp.pack(fill="x")
         self.c_grit = ttk.Progressbar(right, maximum=self.cpu.max_grit)
-        self.c_grit.pack(fill="x", padx=(8, 0), pady=(4, 0))
-        self.c_hype = ttk.Progressbar(right, maximum=100, style="Hype.TProgressbar")
-        self.c_hype.pack(fill="x", padx=(8, 0), pady=(4, 0))
+        self.c_grit.pack(fill="x", pady=(4, 0))
+        self.c_hype = ttk.Progressbar(right, maximum=100, style="Horizontal.Hype.TProgressbar")
+        self.c_hype.pack(fill="x", pady=(4, 0))
         self.c_nums = tk.Label(right, text="", fg="#aaa", bg="#1b1b1b", font=("Arial", 9))
         self.c_nums.pack(anchor="e", pady=(2, 0))
         self.c_limbs = tk.Label(right, text="", fg="#aaa", bg="#1b1b1b", font=("Arial", 9))
-        self.c_limbs.pack(anchor="e", pady=(0, 0))
+        self.c_limbs.pack(anchor="e")
 
         # Turn label
         self.turn_label = tk.Label(
@@ -118,7 +122,7 @@ class TacticalWrestlingApp:
             bg="#000",
             fg="#b6ffb6",
             font=("Consolas", 11),
-            height=6,
+            height=10,
             state="disabled",
             wrap="word",
             yscrollcommand=log_scroll.set,
@@ -421,6 +425,13 @@ class TacticalWrestlingApp:
             return
         self.turn = who
         active = self.player if who == "player" else self.cpu
+
+        # Turn banner to separate actions in the log.
+        banner = "YOU" if who == "player" else "CPU"
+        if self._last_turn_banner != banner:
+            self._last_turn_banner = banner
+            self._log("".ljust(34, "-"))
+            self._log_parts([(f"{banner} TURN", "move")])
 
         # Stun: skip the turn.
         if active.stun_turns > 0:
