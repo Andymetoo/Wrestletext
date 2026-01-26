@@ -1,368 +1,496 @@
+from __future__ import annotations
+
+import random
 import tkinter as tk
 from tkinter import messagebox, ttk
-import random
 
-# --- IMPORT MODULES ---
-from wrestler import Wrestler, MAX_HEALTH
-import moves # Importing our new narrative database
-from mechanics import QTEManager, SubmissionManager
+from mechanics import pin_minigame, submission_minigame
+from moves_db import MOVES
+from wrestler import MAX_HEALTH, Wrestler, WrestlerState
 
-class GameEngine:
-    def __init__(self, root):
+
+class TacticalWrestlingApp:
+    def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Squared Circle: Narrative Edition")
-        self.root.geometry("400x850") 
-        self.root.configure(bg="#121212")
+        self.root.title("WrestleText: State-Based Tactical Simulation")
+        self.root.geometry("460x820")
 
-        self.player = Wrestler("Player", True)
+        self.player = Wrestler("YOU", True)
         self.cpu = Wrestler("CPU", False)
-        self.qte_sys = QTEManager()
-        self.sub_sys = SubmissionManager()
-        
+        self.turn = "player"  # "player" | "cpu"
         self.game_over = False
-        self.mini_game_score = {"p": 0, "c": 0}
+        self._player_bonus_available = False
 
-        self.create_widgets()
-        self.set_neutral_state()
-        self.game_loop()
+        self._build_ui()
+        self._log("Match start. Win only by Pinfall or Submission.")
+        self._start_turn("player")
 
-    def create_widgets(self):
-        # HUD
-        self.hud_frame = tk.Frame(self.root, bg="#222", pady=5)
-        self.hud_frame.pack(fill="x")
+    # --- UI ---
+    def _build_ui(self) -> None:
+        self.root.configure(bg="#101010")
 
-        # Player Bars
-        self.p_stat = tk.Frame(self.hud_frame, bg="#222")
-        self.p_stat.pack(side="left", padx=5, fill="x", expand=True)
-        tk.Label(self.p_stat, text="YOU", fg="#4f4", bg="#222", font=("Impact", 10)).pack(anchor="w")
-        self.p_hp_bar = ttk.Progressbar(self.p_stat, length=100, maximum=MAX_HEALTH)
-        self.p_hp_bar.pack(fill="x")
-        
-        # State Text
-        self.state_label = tk.Label(self.hud_frame, text="NEUTRAL", fg="white", bg="#444", font=("Impact", 14))
-        self.state_label.pack(side="left", padx=5)
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure("TProgressbar", troughcolor="#2a2a2a", background="#3aa655")
 
-        # CPU Bars
-        self.c_stat = tk.Frame(self.hud_frame, bg="#222")
-        self.c_stat.pack(side="right", padx=5, fill="x", expand=True)
-        tk.Label(self.c_stat, text="CPU", fg="#f44", bg="#222", font=("Impact", 10)).pack(anchor="e")
-        self.c_hp_bar = ttk.Progressbar(self.c_stat, length=100, maximum=MAX_HEALTH)
-        self.c_hp_bar.pack(fill="x")
+        self.hud = tk.Frame(self.root, bg="#1b1b1b")
+        self.hud.pack(fill="x", padx=8, pady=8)
 
-        self.heat_label = tk.Label(self.root, text="", fg="orange", bg="#121212", font=("Arial", 10, "bold"))
-        self.heat_label.pack()
+        self.state_line = tk.Label(
+            self.hud,
+            text="",
+            font=("Arial", 11, "bold"),
+            fg="#f2f2f2",
+            bg="#1b1b1b",
+        )
+        self.state_line.pack(fill="x", pady=(4, 8))
+
+        bars = tk.Frame(self.hud, bg="#1b1b1b")
+        bars.pack(fill="x")
+
+        # Player side
+        left = tk.Frame(bars, bg="#1b1b1b")
+        left.pack(side="left", fill="x", expand=True)
+        tk.Label(left, text="YOU", fg="#67ff8a", bg="#1b1b1b", font=("Impact", 10)).pack(anchor="w")
+        self.p_hp = ttk.Progressbar(left, maximum=MAX_HEALTH)
+        self.p_hp.pack(fill="x", padx=(0, 8))
+        self.p_grit = ttk.Progressbar(left, maximum=self.player.max_grit)
+        self.p_grit.pack(fill="x", padx=(0, 8), pady=(4, 0))
+        self.p_nums = tk.Label(left, text="", fg="#aaa", bg="#1b1b1b", font=("Arial", 9))
+        self.p_nums.pack(anchor="w", pady=(2, 0))
+
+        # CPU side
+        right = tk.Frame(bars, bg="#1b1b1b")
+        right.pack(side="right", fill="x", expand=True)
+        tk.Label(right, text="CPU", fg="#ff6b6b", bg="#1b1b1b", font=("Impact", 10)).pack(anchor="e")
+        self.c_hp = ttk.Progressbar(right, maximum=MAX_HEALTH)
+        self.c_hp.pack(fill="x", padx=(8, 0))
+        self.c_grit = ttk.Progressbar(right, maximum=self.cpu.max_grit)
+        self.c_grit.pack(fill="x", padx=(8, 0), pady=(4, 0))
+        self.c_nums = tk.Label(right, text="", fg="#aaa", bg="#1b1b1b", font=("Arial", 9))
+        self.c_nums.pack(anchor="e", pady=(2, 0))
+
+        # Turn label
+        self.turn_label = tk.Label(
+            self.root,
+            text="",
+            font=("Arial", 10, "bold"),
+            fg="#ffd166",
+            bg="#101010",
+        )
+        self.turn_label.pack(fill="x", padx=8)
 
         # Log
-        self.log_frame = tk.Frame(self.root, bg="black", bd=2, relief="sunken")
-        self.log_frame.pack(fill="both", expand=True, padx=5, pady=5)
-        self.log_text = tk.Text(self.log_frame, bg="black", fg="#0f0", font=("Courier New", 12), state="disabled", height=10)
+        log_frame = tk.Frame(self.root, bg="#000", bd=2, relief="sunken")
+        log_frame.pack(fill="both", expand=True, padx=8, pady=8)
+        self.log_text = tk.Text(
+            log_frame,
+            bg="#000",
+            fg="#b6ffb6",
+            font=("Consolas", 11),
+            height=12,
+            state="disabled",
+            wrap="word",
+        )
         self.log_text.pack(fill="both", expand=True)
 
-        # QTE Bar
-        self.qte_frame = tk.Frame(self.root, bg="#222", pady=5)
-        self.qte_frame.pack(fill="x", padx=10)
-        tk.Label(self.qte_frame, text="TIMING BAR (Hit Green Zone 70-95%)", fg="#888", bg="#222", font=("Arial", 8)).pack()
-        self.qte_bar = ttk.Progressbar(self.qte_frame, length=300, maximum=100)
-        self.qte_bar.pack(fill="x")
+        # Moves / context menu
+        self.moves_frame = tk.Frame(self.root, bg="#101010")
+        self.moves_frame.pack(fill="x", padx=8, pady=(0, 8))
+        self.moves_title = tk.Label(
+            self.moves_frame,
+            text="Moves",
+            font=("Arial", 10, "bold"),
+            fg="#f2f2f2",
+            bg="#101010",
+        )
+        self.moves_title.pack(anchor="w", pady=(0, 6))
+        self.moves_grid = tk.Frame(self.moves_frame, bg="#101010")
+        self.moves_grid.pack(fill="x")
+        self.moves_grid.columnconfigure(0, weight=1)
+        self.moves_grid.columnconfigure(1, weight=1)
 
-        # Buttons
-        self.control_frame = tk.Frame(self.root, bg="#1a1a1a")
-        self.control_frame.pack(fill="x", side="bottom", pady=5, padx=5)
-        self.control_frame.columnconfigure(0, weight=1)
-        self.control_frame.columnconfigure(1, weight=1)
-
-        self.buttons = {}
-        for r in range(3):
-            for c in range(2):
-                name = f"btn_{r}{c}"
-                btn = tk.Button(self.control_frame, text="...", font=("Arial", 10, "bold"), height=3, bg="#333", fg="white")
-                btn.grid(row=r, column=c, sticky="nsew", padx=2, pady=2)
-                self.buttons[name] = btn
-
-    # --- ENGINE UTILS ---
-    def game_loop(self):
-        if self.game_over: return
-        if self.qte_sys.active:
-            self.qte_sys.update()
-            self.qte_bar['value'] = self.qte_sys.value
-        self.root.after(50, self.game_loop)
-
-    def log(self, text):
-        if self.game_over: return
+    def _log(self, msg: str) -> None:
+        if self.game_over:
+            return
         self.log_text.config(state="normal")
-        self.log_text.insert("end", f"> {text}\n")
+        self.log_text.insert("end", f"> {msg}\n")
         self.log_text.see("end")
         self.log_text.config(state="disabled")
 
-    def clear_buttons(self):
-        if self.game_over: return
-        for btn in self.buttons.values():
-            btn.config(text="", command=None, state="disabled", bg="#222")
+    def _update_hud(self) -> None:
+        self.state_line.config(
+            text=f"YOU: {self.player.state.value}  |  CPU: {self.cpu.state.value}"
+        )
+        self.turn_label.config(text=f"TURN: {'YOU' if self.turn == 'player' else 'CPU'}")
 
-    def update_ui(self):
-        if self.game_over: return
-        self.p_hp_bar['value'] = self.player.hp
-        self.c_hp_bar['value'] = self.cpu.hp
-        self.heat_label.config(text=f"HEAT: +{self.player.heat_bonus}")
-        
-        if self.cpu.hp <= 0:
-            self.game_over = True
-            messagebox.showinfo("WIN", "Opponent Tapped Out!")
-            self.root.destroy()
-        elif self.player.hp <= 0:
-            self.game_over = True
-            messagebox.showinfo("LOSS", "You were PINNED!")
-            self.root.destroy()
+        self.p_hp["value"] = self.player.hp
+        self.c_hp["value"] = self.cpu.hp
+        self.p_grit["value"] = self.player.grit
+        self.c_grit["value"] = self.cpu.grit
 
-    # --- STATE: NEUTRAL ---
-    def set_neutral_state(self):
-        self.player.state = "NEUTRAL"
-        self.state_label.config(text="NEUTRAL", bg="#555", fg="white")
-        self.clear_buttons()
-        self.qte_bar['value'] = 0
+        self.p_nums.config(text=f"HP {self.player.hp}/{MAX_HEALTH}  |  Grit {self.player.grit}/{self.player.max_grit}")
+        self.c_nums.config(text=f"HP {self.cpu.hp}/{MAX_HEALTH}  |  Grit {self.cpu.grit}/{self.cpu.max_grit}")
 
-        self.buttons["btn_00"].config(text="LOCK UP", bg="#44f", fg="white", state="normal", 
-                                      command=lambda: self.start_struggle("TIE_UP"))
-        
-        penalty = self.player.get_stale_penalty("Strike")
-        risk_txt = "Safe" if penalty == 0 else f"Risk {int(penalty*100)}%"
-        self.buttons["btn_01"].config(text=f"STRIKE\n({risk_txt})", bg="#a44", fg="white", state="normal", 
-                                      command=self.attempt_strike)
-        
-        self.buttons["btn_10"].config(text="RUNNING ATK", bg="#a44", fg="white", state="normal", 
-                                      command=self.attempt_running_attack)
-        
-        self.buttons["btn_11"].config(text="TAUNT", bg="#444", fg="white", state="normal", 
-                                      command=self.attempt_taunt)
-        self.buttons["btn_20"].config(text="REST\n(+Stamina)", bg="#444", fg="white", state="normal",
-                          command=lambda: self.log("You circle and breathe..."))
+    # --- Moves filtering ---
+    def _move_is_legal(self, move_name: str, user: Wrestler, target: Wrestler) -> bool:
+        move = MOVES[move_name]
+        ru = move["req_user_state"]
+        rt = move["req_target_state"]
+        if ru != "ANY" and ru != user.state.value:
+            return False
+        if rt != "ANY" and rt != target.state.value:
+            return False
+        return True
 
-    # --- STATE: GRAPPLE ---
-    def player_wins_control(self):
-        self.player.state = "CONTROL"
-        self.state_label.config(text="IN CONTROL", bg="#0f0", fg="black")
-        self.clear_buttons()
-        
-        move_keys = list(moves.GRAPPLE_MOVES.keys())
-        for i in range(3): 
-            if i < len(move_keys):
-                m_name = move_keys[i]
-                m_data = moves.GRAPPLE_MOVES[m_name]
-                r, c = (0,0) if i==0 else (0,1) if i==1 else (1,0)
-                
-                self.buttons[f"btn_{r}{c}"].config(
-                    text=f"{m_name}\n({m_data['dmg']} dmg)", bg="#a00", fg="white", state="normal",
-                    command=lambda m=m_data: self.start_qte_ui(m)
+    def _available_moves(self, user: Wrestler, target: Wrestler) -> list[str]:
+        names = [n for n in MOVES.keys() if n != "Rest" and self._move_is_legal(n, user, target)]
+
+        def key(n: str) -> tuple[int, int, str]:
+            t = MOVES[n]["type"]
+            type_order = {"Setup": 0, "Strike": 1, "Grapple": 2, "Aerial": 3, "Submission": 4, "Pin": 5}
+            return (type_order.get(t, 99), int(MOVES[n]["cost"]), n)
+
+        return sorted(names, key=key)
+
+    def _refresh_player_buttons(self) -> None:
+        for child in list(self.moves_grid.winfo_children()):
+            child.destroy()
+
+        if self.game_over or self.turn != "player":
+            return
+
+        moves = self._available_moves(self.player, self.cpu)
+        affordable = [m for m in moves if MOVES[m]["cost"] <= self.player.grit]
+        if len(affordable) == 0:
+            moves_to_show = ["Rest"]
+        else:
+            moves_to_show = moves
+            # Only show Rest as fallback when you can't afford anything.
+
+        if len(moves_to_show) == 0:
+            moves_to_show = ["Rest"]
+
+        max_buttons = 8
+        moves_to_show = moves_to_show[:max_buttons]
+
+        for idx, name in enumerate(moves_to_show):
+            move = MOVES[name]
+            cost = int(move["cost"])
+            dmg = int(move["damage"])
+            label = f"{name}\nCost {cost}"
+            if dmg > 0:
+                label += f" | Dmg {dmg}"
+
+            r, c = divmod(idx, 2)
+            btn = tk.Button(
+                self.moves_grid,
+                text=label,
+                height=3,
+                font=("Arial", 10, "bold"),
+                bg="#2f2f2f",
+                fg="#f2f2f2",
+                activebackground="#444",
+                activeforeground="#fff",
+                command=lambda n=name: self._player_take_action(n),
+            )
+            btn.grid(row=r, column=c, sticky="nsew", padx=4, pady=4)
+
+            if name != "Rest" and cost > self.player.grit:
+                btn.config(state="disabled", bg="#222", fg="#777")
+
+    # --- Turn flow ---
+    def _start_turn(self, who: str) -> None:
+        if self.game_over:
+            return
+        self.turn = who
+        active = self.player if who == "player" else self.cpu
+
+        if who == "player":
+            self._player_bonus_available = True
+
+        gained = active.regen_grit()
+        if gained > 0:
+            self._log(f"{active.name} regains {gained} Grit.")
+
+        self._update_hud()
+
+        if who == "player":
+            self._refresh_player_buttons()
+        else:
+            for child in list(self.moves_grid.winfo_children()):
+                child.destroy()
+            self.root.after(700, self._cpu_take_turn)
+
+    def _end_match(self, winner: str, reason: str) -> None:
+        if self.game_over:
+            return
+        self.game_over = True
+        self._update_hud()
+        messagebox.showinfo("Match End", f"{winner} wins by {reason}!")
+        self.root.destroy()
+
+    # --- Player action ---
+    def _player_take_action(self, move_name: str) -> None:
+        if self.game_over or self.turn != "player":
+            return
+        before = self.cpu.state
+        self._execute_move(attacker=self.player, defender=self.cpu, move_name=move_name)
+        if self.game_over:
+            return
+
+        move = MOVES.get(move_name, {})
+        knocked_down = (
+            self._player_bonus_available
+            and move.get("set_target_state") == "GROUNDED"
+            and before != WrestlerState.GROUNDED
+            and self.cpu.state == WrestlerState.GROUNDED
+        )
+
+        if knocked_down:
+            self._player_bonus_available = False
+            self._log("Momentum! You keep control for one more action.")
+            self._update_hud()
+            self._refresh_player_buttons()
+            return
+
+        self._start_turn("cpu")
+
+    # --- CPU action ---
+    def _cpu_choose_move(self) -> str:
+        options = self._available_moves(self.cpu, self.player)
+        affordable = [m for m in options if MOVES[m]["cost"] <= self.cpu.grit]
+        if not affordable:
+            return "Rest"
+
+        def score(name: str) -> float:
+            mv = MOVES[name]
+            base = float(mv["damage"])
+            t = mv["type"]
+            if t == "Pin" and self.player.state == WrestlerState.GROUNDED:
+                base += 25.0 * (1.0 - self.player.hp_pct())
+            if t == "Submission" and self.player.state == WrestlerState.GROUNDED:
+                base += 20.0 * (1.0 - self.player.hp_pct())
+            if mv.get("set_target_state") == "GROUNDED":
+                base += 6.0
+            if mv.get("set_target_state") == "RUNNING":
+                base += 3.0
+            # Slightly prefer cheaper moves when low on grit.
+            base -= 0.15 * int(mv["cost"])
+            # Add small randomness so it doesn't play identical.
+            return base + random.random() * 1.5
+
+        affordable.sort(key=score, reverse=True)
+        return affordable[0]
+
+    def _cpu_take_turn(self) -> None:
+        if self.game_over or self.turn != "cpu":
+            return
+        move_name = self._cpu_choose_move()
+        self._execute_move(attacker=self.cpu, defender=self.player, move_name=move_name)
+        if not self.game_over:
+            self._start_turn("player")
+
+    # --- Reaction interrupts ---
+    def _reaction_menu(self, incoming_damage: int) -> dict:
+        """Returns {damage:int, negated:bool, reversed:bool, reversal_damage:int}."""
+        top = tk.Toplevel(self.root)
+        top.title("React!")
+        top.transient(self.root)
+        top.grab_set()
+        top.resizable(False, False)
+
+        tk.Label(
+            top,
+            text=f"CPU attacks! Incoming damage: {incoming_damage}",
+            font=("Arial", 11, "bold"),
+        ).pack(padx=12, pady=(12, 6))
+        grit_lbl = tk.Label(top, text=f"Your Grit: {self.player.grit}", font=("Arial", 9), fg="#555")
+        grit_lbl.pack(padx=12, pady=(0, 10))
+
+        result = {"chosen": False, "damage": incoming_damage, "negated": False, "reversed": False, "reversal_damage": 0}
+
+        def choose_brace() -> None:
+            if result["chosen"]:
+                return
+            result["chosen"] = True
+            result["damage"] = int((incoming_damage + 1) // 2)
+            top.destroy()
+
+        def choose_dodge() -> None:
+            if result["chosen"]:
+                return
+            if not self.player.spend_grit(2):
+                return
+            result["chosen"] = True
+            if random.random() < 0.5:
+                result["damage"] = 0
+                result["negated"] = True
+            top.destroy()
+
+        def choose_reversal() -> None:
+            if result["chosen"]:
+                return
+            if not self.player.spend_grit(4):
+                return
+            result["chosen"] = True
+            if random.random() < 0.3:
+                result["damage"] = 0
+                result["negated"] = True
+                result["reversed"] = True
+                result["reversal_damage"] = max(1, int(incoming_damage * 0.8))
+            top.destroy()
+
+        btns = tk.Frame(top)
+        btns.pack(padx=12, pady=(0, 12), fill="x")
+
+        b1 = ttk.Button(btns, text="Brace (0 Grit) – Take 50%", command=choose_brace)
+        b1.pack(fill="x", pady=4)
+
+        b2 = ttk.Button(btns, text="Dodge (2 Grit) – 50% take 0", command=choose_dodge)
+        b2.pack(fill="x", pady=4)
+        if self.player.grit < 2:
+            b2.state(["disabled"])
+
+        b3 = ttk.Button(btns, text="Reversal (4 Grit) – 30% reverse", command=choose_reversal)
+        b3.pack(fill="x", pady=4)
+        if self.player.grit < 4:
+            b3.state(["disabled"])
+
+        top.protocol("WM_DELETE_WINDOW", choose_brace)
+        top.wait_window()
+        return result
+
+    # --- Core move execution ---
+    def _execute_move(self, *, attacker: Wrestler, defender: Wrestler, move_name: str) -> None:
+        if self.game_over:
+            return
+
+        if move_name != "Rest" and not self._move_is_legal(move_name, attacker, defender):
+            self._log(f"{attacker.name} tried {move_name}, but it wasn't legal.")
+            return
+
+        move = MOVES[move_name]
+        cost = int(move["cost"])
+        if not attacker.spend_grit(cost):
+            self._log(f"{attacker.name} doesn't have enough Grit for {move_name}.")
+            return
+
+        self._log(f"{attacker.name} uses {move_name}! {move['flavor_text']}")
+
+        # Rest is special: high regen.
+        if move_name == "Rest":
+            bonus = 5
+            before = attacker.grit
+            attacker.grit = min(attacker.max_grit, attacker.grit + bonus)
+            self._log(f"{attacker.name} recovers (+{attacker.grit - before} Grit).")
+            self._update_hud()
+            return
+
+        mtype = move["type"]
+
+        # Pin / Submission resolve match-ending conditions.
+        if mtype == "Pin":
+            if attacker.is_player:
+                ok = pin_minigame(
+                    self.root,
+                    title="Pin Attempt",
+                    prompt="PIN! Stop the marker in the green window to score the fall.",
+                    victim_hp_pct=defender.hp_pct(),
                 )
-        
-        self.buttons["btn_21"].config(text="CANCEL", bg="#444", fg="white", state="normal", 
-                                      command=self.set_neutral_state)
-
-    def start_qte_ui(self, move_data):
-        self.qte_sys.start(move_data)
-        self.state_label.config(text="TIMING!", bg="#ffffff", fg="black")
-        self.log(f"Setting up: {move_data['desc']}...")
-        self.clear_buttons()
-        self.buttons["btn_10"].config(text="!!! EXECUTE !!!", bg="#0f0", fg="black", state="normal", command=self.resolve_qte_ui)
-        self.buttons["btn_11"].config(text="!!! EXECUTE !!!", bg="#0f0", fg="black", state="normal", command=self.resolve_qte_ui)
-
-    def resolve_qte_ui(self):
-        val = self.qte_sys.resolve()
-        move = self.qte_sys.target_move
-        
-        if val > 95:
-            # BOTCH
-            self.log(f"BOTCHED! (Timing: {val}%)")
-            self.log(move['botch']) # Using new flavor text
-            self.player.hp -= 10
-            self.update_ui()
-            self.root.after(2000, self.set_neutral_state)
-        elif val >= 70:
-            # CRITICAL
-            crit = int(move['dmg'] * 1.5)
-            self.log(f"PERFECT! (Timing: {val}%)")
-            self.log(move['crit']) # Using new flavor text
-            self.cpu.hp -= crit
-            self.update_ui()
-            self.root.after(2000, self.set_neutral_state)
-        elif val >= 40:
-            # HIT
-            self.log(f"GOOD HIT! (Timing: {val}%)")
-            self.log(move['hit']) # Using new flavor text
-            self.cpu.hp -= move['dmg']
-            self.update_ui()
-            self.root.after(2000, self.set_neutral_state)
-        else:
-            # WEAK
-            self.log(f"WEAK... (Timing: {val}%)")
-            self.log("They shrugged it off.")
-            self.cpu.hp -= int(move['dmg'] / 2)
-            self.update_ui()
-            self.cpu_attacks_logic()
-
-    # --- ACTIONS ---
-    def attempt_strike(self):
-        penalty = self.player.get_stale_penalty("Strike")
-        self.player.record_move("Strike")
-        
-        # Pick a random strike text
-        strike_name = random.choice(list(moves.STRIKES.keys()))
-        strike_data = moves.STRIKES[strike_name]
-
-        if random.random() > (0.2 + penalty):
-            dmg = strike_data['dmg'] + self.player.heat_bonus
-            self.log(strike_data['hit']) # Flavor!
-            self.cpu.hp -= dmg
-            self.player.heat_bonus = 0
-            self.update_ui()
-            if random.random() > 0.6: self.player_wins_control()
-            else: self.set_neutral_state()
-        else:
-            if penalty > 0: self.log("Predictable! They know your pattern!")
-            else: self.log(strike_data['blocked']) # Flavor!
-            self.cpu_attacks_logic()
-
-    def attempt_running_attack(self):
-        # Let's randomly pick Clothesline or Spear for variety
-        m_name = random.choice(list(moves.RUNNING_MOVES.keys()))
-        move = moves.RUNNING_MOVES[m_name]
-        
-        self.log(f"You hit the ropes for a {m_name}...")
-        
-        if random.random() > move['risk']:
-            total = move['dmg'] + self.player.heat_bonus
-            self.log(move['hit']) # Flavor!
-            self.cpu.hp -= total
-            self.player.heat_bonus = 0
-            self.update_ui()
-            self.set_ground_state()
-        else:
-            self.log(move['miss']) # Flavor!
-            self.player.hp -= 5
-            self.cpu_attacks_logic()
-
-    def attempt_taunt(self):
-        if random.random() > 0.4:
-            self.player.heat_bonus += 5
-            self.log(f"You play to the crowd! (+{self.player.heat_bonus} Heat)")
-            self.update_ui()
-            self.cpu_attacks_logic()
-        else:
-            self.log("You turned your back! Cheap shot!")
-            self.player.hp -= 5
-            self.cpu_attacks_logic()
-
-    def set_ground_state(self):
-        self.player.state = "GROUND"
-        self.state_label.config(text="ENEMY DOWN", bg="#880088", fg="white")
-        self.clear_buttons()
-        
-        m_stomp = moves.GROUND_MOVES["Stomp"]
-        m_elbow = moves.GROUND_MOVES["Elbow Drop"]
-
-        self.buttons["btn_00"].config(text=f"STOMP\n({m_stomp['dmg']} dmg)", bg="#aa0", state="normal", 
-                                      command=lambda: self.resolve_ground(m_stomp))
-        self.buttons["btn_01"].config(text=f"ELBOW\n(Risk {m_elbow['risk']})", bg="#a44", state="normal", 
-                                      command=lambda: self.resolve_ground(m_elbow))
-        self.buttons["btn_10"].config(text="SUBMISSION", bg="#00a", fg="white", state="normal", 
-                                      command=lambda: self.start_sub_ui(False))
-        self.buttons["btn_11"].config(text="PICK UP", bg="#444", fg="white", state="normal", 
-                                      command=self.set_neutral_state)
-
-    def resolve_ground(self, move_data):
-        if random.random() < move_data['risk']:
-            self.log(move_data['miss']) # Flavor!
-            self.player.hp -= 5 # Self damage on miss
-            self.update_ui()
-            self.set_neutral_state()
-        else:
-            final = move_data['dmg'] + self.player.heat_bonus
-            self.log(move_data['hit']) # Flavor!
-            self.cpu.hp -= final
-            self.player.heat_bonus = 0
-            self.update_ui()
-
-    # --- SUBMISSION UI ---
-    def start_sub_ui(self, is_defense):
-        self.sub_sys.start(is_defense)
-        self.state_label.config(text="SUBMISSION", bg="#00f" if not is_defense else "#f00")
-        self.log(f"Applying hold... Pressure: {self.sub_sys.target}")
-        self.update_sub_buttons(is_defense)
-
-    def update_sub_buttons(self, is_defense):
-        self.clear_buttons()
-        self.buttons["btn_00"].config(text="LOWER", bg="#44f", state="normal", command=lambda: self.resolve_sub("LOWER", is_defense))
-        self.buttons["btn_01"].config(text="HIGHER", bg="#f44", state="normal", command=lambda: self.resolve_sub("HIGHER", is_defense))
-
-    def resolve_sub(self, guess, is_defense):
-        next_val = self.sub_sys.generate_next()
-        success = self.sub_sys.check_guess(guess, next_val)
-        
-        self.log(f"Next: {next_val} (Prev: {self.sub_sys.target})")
-        self.sub_sys.target = next_val
-
-        if is_defense:
-            if success:
-                self.sub_sys.attempts += 1
-                self.log(f"Fight it! {self.sub_sys.attempts}/3")
-                if self.sub_sys.attempts >= 3:
-                    self.log("YOU BROKE THE HOLD!")
-                    self.set_neutral_state()
-                else: self.update_sub_buttons(True)
+                if ok:
+                    self._end_match("YOU", "PINFALL")
+                else:
+                    self._log("They kicked out!")
             else:
-                self.log("They wrench it back! 8 dmg")
-                self.player.hp -= 8
-                self.update_ui()
-                self.update_sub_buttons(True)
-        else:
-            if success:
-                self.log("You tighten the hold! 10 dmg")
-                self.cpu.hp -= 10
-                self.update_ui()
-                self.update_sub_buttons(False)
+                ok = pin_minigame(
+                    self.root,
+                    title="Kick Out!",
+                    prompt="KICK OUT! Stop the marker in the green window to survive.",
+                    victim_hp_pct=defender.hp_pct(),
+                )
+                if ok:
+                    self._log("You kicked out!")
+                else:
+                    self._end_match("CPU", "PINFALL")
+            self._update_hud()
+            return
+
+        if mtype == "Submission":
+            if attacker.is_player:
+                ok = submission_minigame(
+                    self.root,
+                    title="Submission Attempt",
+                    prompt="Finish it! Guess the secret number.",
+                    victim_hp_pct=defender.hp_pct(),
+                )
+                if ok:
+                    self._end_match("YOU", "SUBMISSION")
+                else:
+                    self._log("They fought out of the hold!")
             else:
-                self.log("They kicked you off!")
-                self.set_neutral_state()
+                ok = submission_minigame(
+                    self.root,
+                    title="Escape Submission!",
+                    prompt="Escape! Guess the secret number before you tap.",
+                    victim_hp_pct=defender.hp_pct(),
+                )
+                if ok:
+                    self._log("You escaped the submission!")
+                else:
+                    self._end_match("CPU", "SUBMISSION")
+            self._update_hud()
+            return
 
-    # --- LOCK UP / AI ---
-    def start_struggle(self, context):
-        self.player.state = context
-        self.mini_game_score = {"p": 0, "c": 0}
-        self.state_label.config(text="LOCK UP", bg="#fa0", fg="black")
-        self.log("Collar and Elbow tie up!")
-        self.struggle_hit("p")
-        self.clear_buttons()
-        self.buttons["btn_00"].config(text="PUSH", bg="#0a0", state="normal", command=lambda: self.struggle_hit("p"))
-        self.buttons["btn_01"].config(text="HOLD", bg="#a00", state="normal", command=self.struggle_stand)
+        raw_damage = int(move["damage"])
+        negated = False
 
-    def struggle_hit(self, who):
-        if self.game_over: return
-        self.mini_game_score[who] += random.randint(1, 6)
-        if who=="p": self.log(f"You push... {self.mini_game_score['p']}")
-        
-        if self.mini_game_score[who] > 15:
-            if who=="p": self.log("You slipped! BUSTED!") or self.cpu_attacks_logic()
-            else: self.log("CPU over-committed! BUSTED!") or self.player_wins_control()
-
-    def struggle_stand(self):
-        self.log(f"Holding at {self.mini_game_score['p']}...")
-        while self.mini_game_score['c'] < 12: self.struggle_hit("c")
-        if self.mini_game_score['c'] > 15: return
-        if self.mini_game_score['p'] >= self.mini_game_score['c']: self.player_wins_control()
-        else: self.cpu_attacks_logic()
-
-    def cpu_attacks_logic(self):
-        roll = random.random()
-        if roll < 0.4:
-            self.log("CPU lands a haymaker! 5 dmg")
-            self.player.hp -= 5
-            self.update_ui()
-            self.root.after(1000, self.set_neutral_state)
+        # Fluid Momentum: Player gets a reaction menu when CPU attacks.
+        if (not attacker.is_player) and raw_damage > 0:
+            reaction = self._reaction_menu(raw_damage)
+            self._update_hud()
+            dmg = int(reaction["damage"])
+            negated = bool(reaction["negated"])
+            if dmg == 0:
+                if reaction.get("reversed"):
+                    self._log("REVERSAL! You turn it around!")
+                    self.cpu.take_damage(int(reaction["reversal_damage"]))
+                    self._log(f"CPU takes {int(reaction['reversal_damage'])} damage back.")
+                else:
+                    self._log("You avoid the hit!")
+            else:
+                self.player.take_damage(dmg)
+                self._log(f"You take {dmg} damage.")
         else:
-            self.log("CPU locks in a Sleeper Hold!")
-            self.start_sub_ui(True)
+            # Normal damage application (player attacking CPU, or non-damaging CPU move)
+            if raw_damage > 0:
+                defender.take_damage(raw_damage)
+                self._log(f"{defender.name} takes {raw_damage} damage.")
+
+        # State transitions only happen if the hit wasn't fully negated (dodge/reversal).
+        if not negated:
+            if move_name == "Possum":
+                # Small chance to trip the opponent.
+                if random.random() < 0.35:
+                    defender.set_state(WrestlerState.GROUNDED)
+                    self._log("It worked! They stumble and hit the mat.")
+
+            if "set_user_state" in move:
+                attacker.set_state(WrestlerState(move["set_user_state"]))
+            if "set_target_state" in move:
+                defender.set_state(WrestlerState(move["set_target_state"]))
+
+        # If someone is at 0 HP, it only affects pin/sub difficulty.
+        if defender.hp == 0:
+            self._log(f"{defender.name} is exhausted (0 HP) — they're very vulnerable to Pin/Submission.")
+
+        self._update_hud()
+
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = GameEngine(root)
+    app = TacticalWrestlingApp(root)
     root.mainloop()
