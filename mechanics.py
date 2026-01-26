@@ -35,6 +35,7 @@ def pin_minigame(
     prompt: str,
     victim_hp_pct: float,
     duration_ms: int = 4500,
+    host: tk.Misc | None = None,
 ) -> bool:
     """Shrinking-window timing check.
 
@@ -43,15 +44,21 @@ def pin_minigame(
     """
     victim_hp_pct = _clamp(victim_hp_pct, 0.0, 1.0)
 
-    top = tk.Toplevel(parent)
-    top.title(title)
-    top.transient(parent)
-    top.grab_set()
-    top.resizable(False, False)
+    if host is None:
+        top = tk.Toplevel(parent)
+        top.title(title)
+        top.transient(parent)
+        top.grab_set()
+        top.resizable(False, False)
+        container: tk.Misc = top
+    else:
+        container = host
+        for w in list(container.winfo_children()):
+            w.destroy()
 
-    tk.Label(top, text=prompt, font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 6))
+    tk.Label(container, text=prompt, font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 6))
     tk.Label(
-        top,
+        container,
         text="Stop the moving marker inside the green window.",
         font=("Arial", 9),
         fg="#555",
@@ -59,7 +66,7 @@ def pin_minigame(
 
     width = 320
     height = 50
-    canvas = tk.Canvas(top, width=width, height=height, bg="#111", highlightthickness=0)
+    canvas = tk.Canvas(container, width=width, height=height, bg="#111", highlightthickness=0)
     canvas.pack(padx=12, pady=(0, 10))
 
     # Lower HP => bigger success window.
@@ -74,6 +81,7 @@ def pin_minigame(
     marker = canvas.create_rectangle(0, 8, 8, height - 8, fill="#f2f2f2", outline="")
 
     result = {"done": False, "success": False}
+    done_var = tk.BooleanVar(value=False)
     start = {"t": None}
     speed_px = 7
 
@@ -84,7 +92,9 @@ def pin_minigame(
         marker_center = (coords[0] + coords[2]) / 2.0
         result["success"] = window_x0 <= marker_center <= window_x1
         result["done"] = True
-        top.destroy()
+        if host is None:
+            top.destroy()
+        done_var.set(True)
 
     def tick(now_ms: int = 0) -> None:
         if result["done"]:
@@ -95,7 +105,9 @@ def pin_minigame(
         if elapsed >= duration_ms:
             result["done"] = True
             result["success"] = False
-            top.destroy()
+            if host is None:
+                top.destroy()
+            done_var.set(True)
             return
 
         coords = canvas.coords(marker)
@@ -106,16 +118,21 @@ def pin_minigame(
             x0 = 0
             x1 = 8
         canvas.coords(marker, x0, y0, x1, y1)
-        top.after(16, lambda: tick(elapsed + 16))
+        parent.after(16, lambda: tick(elapsed + 16))
 
-    btn = ttk.Button(top, text="STOP!", command=stop)
+    btn = ttk.Button(container, text="STOP!", command=stop)
     btn.pack(padx=12, pady=(0, 12), fill="x")
-    top.bind("<space>", lambda _e: stop())
+    if host is None:
+        top.bind("<space>", lambda _e: stop())
 
-    _position_modal_bottom(parent, top, bottom_padding=28)
+    if host is None:
+        _position_modal_bottom(parent, top, bottom_padding=28)
 
     tick(0)
-    top.wait_window()
+    if host is None:
+        top.wait_window()
+    else:
+        parent.wait_variable(done_var)
     return bool(result["success"])
 
 
@@ -125,6 +142,7 @@ def submission_minigame(
     title: str,
     prompt: str,
     victim_hp_pct: float,
+    host: tk.Misc | None = None,
 ) -> bool:
     """Higher/Lower sequence guessing game (classic over/under).
 
@@ -144,24 +162,31 @@ def submission_minigame(
     banned = [current]
     streak = 0
 
-    top = tk.Toplevel(parent)
-    top.title(title)
-    top.transient(parent)
-    top.grab_set()
-    top.resizable(False, False)
+    if host is None:
+        top = tk.Toplevel(parent)
+        top.title(title)
+        top.transient(parent)
+        top.grab_set()
+        top.resizable(False, False)
+        container: tk.Misc = top
+    else:
+        container = host
+        for w in list(container.winfo_children()):
+            w.destroy()
 
-    tk.Label(top, text=prompt, font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 6))
+    tk.Label(container, text=prompt, font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 6))
 
-    status = tk.Label(top, text=f"Streak: {streak}/{required}", font=("Arial", 9), fg="#555")
+    status = tk.Label(container, text=f"Streak: {streak}/{required}", font=("Arial", 9), fg="#555")
     status.pack(padx=12, pady=(0, 8))
 
-    current_lbl = tk.Label(top, text=f"CURRENT: {current}", font=("Arial", 18, "bold"))
+    current_lbl = tk.Label(container, text=f"CURRENT: {current}", font=("Arial", 18, "bold"))
     current_lbl.pack(padx=12, pady=(0, 10))
 
-    hint = tk.Label(top, text="Will the NEXT number be higher or lower?", font=("Arial", 9))
+    hint = tk.Label(container, text="Will the NEXT number be higher or lower?", font=("Arial", 9))
     hint.pack(padx=12, pady=(0, 10))
 
     result = {"done": False, "success": False}
+    done_var = tk.BooleanVar(value=False)
 
     def next_val() -> int:
         nonlocal banned
@@ -190,13 +215,17 @@ def submission_minigame(
             if streak >= required:
                 result["done"] = True
                 result["success"] = True
-                top.destroy()
+                if host is None:
+                    top.destroy()
+                done_var.set(True)
         else:
             result["done"] = True
             result["success"] = False
-            top.destroy()
+            if host is None:
+                top.destroy()
+            done_var.set(True)
 
-    btns = tk.Frame(top)
+    btns = tk.Frame(container)
     btns.pack(padx=12, pady=(0, 12), fill="x")
 
     b1 = ttk.Button(btns, text="LOWER", command=lambda: choose("LOWER"))
@@ -204,9 +233,13 @@ def submission_minigame(
     b2 = ttk.Button(btns, text="HIGHER", command=lambda: choose("HIGHER"))
     b2.pack(fill="x", pady=4)
 
-    _position_modal_bottom(parent, top, bottom_padding=28)
+    if host is None:
+        _position_modal_bottom(parent, top, bottom_padding=28)
 
-    top.wait_window()
+    if host is None:
+        top.wait_window()
+    else:
+        parent.wait_variable(done_var)
     return bool(result["success"])
 
 
@@ -215,6 +248,7 @@ def lockup_minigame(
     *,
     title: str,
     prompt: str,
+    host: tk.Misc | None = None,
 ) -> bool:
     """Push-your-luck lock-up (PUSH/HOLD).
 
@@ -222,24 +256,31 @@ def lockup_minigame(
     Bust rule: if you push past 15, you lose.
     HOLD ends your pushing and lets CPU respond.
     """
-    top = tk.Toplevel(parent)
-    top.title(title)
-    top.transient(parent)
-    top.grab_set()
-    top.resizable(False, False)
+    if host is None:
+        top = tk.Toplevel(parent)
+        top.title(title)
+        top.transient(parent)
+        top.grab_set()
+        top.resizable(False, False)
+        container: tk.Misc = top
+    else:
+        container = host
+        for w in list(container.winfo_children()):
+            w.destroy()
 
-    tk.Label(top, text=prompt, font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 6))
-    tk.Label(top, text="Get closer to 15 without going over.", font=("Arial", 9), fg="#555").pack(
+    tk.Label(container, text=prompt, font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 6))
+    tk.Label(container, text="Get closer to 15 without going over.", font=("Arial", 9), fg="#555").pack(
         padx=12, pady=(0, 10)
     )
 
     scores = {"p": 0, "c": 0}
     result = {"done": False, "success": False}
+    done_var = tk.BooleanVar(value=False)
 
-    status = tk.Label(top, text="YOU: 0   |   CPU: 0", font=("Arial", 12, "bold"))
+    status = tk.Label(container, text="YOU: 0   |   CPU: 0", font=("Arial", 12, "bold"))
     status.pack(padx=12, pady=(0, 10))
 
-    log = tk.Label(top, text="", font=("Arial", 9), fg="#333")
+    log = tk.Label(container, text="", font=("Arial", 9), fg="#333")
     log.pack(padx=12, pady=(0, 10))
 
     def refresh() -> None:
@@ -255,7 +296,9 @@ def lockup_minigame(
         result["done"] = True
         result["success"] = player_won
         log.config(text=msg)
-        top.after(450, top.destroy)
+        if host is None:
+            top.after(450, top.destroy)
+        done_var.set(True)
 
     def push() -> None:
         if result["done"]:
@@ -282,15 +325,17 @@ def lockup_minigame(
         else:
             finish(False, "CPU muscles you around and takes control!")
 
-    btns = tk.Frame(top)
+    btns = tk.Frame(container)
     btns.pack(padx=12, pady=(0, 12), fill="x")
     ttk.Button(btns, text="PUSH", command=push).pack(fill="x", pady=4)
     ttk.Button(btns, text="HOLD", command=hold).pack(fill="x", pady=4)
 
-    _position_modal_bottom(parent, top, bottom_padding=28)
-
     refresh()
-    top.wait_window()
+    if host is None:
+        _position_modal_bottom(parent, top, bottom_padding=28)
+        top.wait_window()
+    else:
+        parent.wait_variable(done_var)
     return bool(result["success"])
 
 
@@ -300,6 +345,7 @@ def grapple_qte_minigame(
     title: str,
     prompt: str,
     duration_ms: int = 3800,
+    host: tk.Misc | None = None,
 ) -> dict:
     """Grapple QTE timing bar.
 
@@ -311,15 +357,21 @@ def grapple_qte_minigame(
 
     Returns dict: {"tier": str, "timing": int, "multiplier": float}
     """
-    top = tk.Toplevel(parent)
-    top.title(title)
-    top.transient(parent)
-    top.grab_set()
-    top.resizable(False, False)
+    if host is None:
+        top = tk.Toplevel(parent)
+        top.title(title)
+        top.transient(parent)
+        top.grab_set()
+        top.resizable(False, False)
+        container: tk.Misc = top
+    else:
+        container = host
+        for w in list(container.winfo_children()):
+            w.destroy()
 
-    tk.Label(top, text=prompt, font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 6))
+    tk.Label(container, text=prompt, font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 6))
     tk.Label(
-        top,
+        container,
         text="Stop in the green zone (70–95). Over 95 is a botch.",
         font=("Arial", 9),
         fg="#555",
@@ -327,7 +379,7 @@ def grapple_qte_minigame(
 
     width = 320
     height = 56
-    canvas = tk.Canvas(top, width=width, height=height, bg="#111", highlightthickness=0)
+    canvas = tk.Canvas(container, width=width, height=height, bg="#111", highlightthickness=0)
     canvas.pack(padx=12, pady=(0, 10))
 
     def pct_to_x(p: float) -> int:
@@ -340,6 +392,7 @@ def grapple_qte_minigame(
     marker = canvas.create_rectangle(0, 10, 8, height - 10, fill="#f2f2f2", outline="")
 
     result = {"done": False, "timing": 0}
+    done_var = tk.BooleanVar(value=False)
     start = {"t": None}
     speed_px = 9
 
@@ -351,7 +404,9 @@ def grapple_qte_minigame(
         timing = int(round(_clamp(marker_center / (width - 1) * 100.0, 0.0, 100.0)))
         result["timing"] = timing
         result["done"] = True
-        top.destroy()
+        if host is None:
+            top.destroy()
+        done_var.set(True)
 
     def tick(now_ms: int = 0) -> None:
         if result["done"]:
@@ -362,7 +417,9 @@ def grapple_qte_minigame(
         if elapsed >= duration_ms:
             result["done"] = True
             result["timing"] = 0
-            top.destroy()
+            if host is None:
+                top.destroy()
+            done_var.set(True)
             return
 
         x0, y0, x1, y1 = canvas.coords(marker)
@@ -372,16 +429,19 @@ def grapple_qte_minigame(
             x0 = 0
             x1 = 8
         canvas.coords(marker, x0, y0, x1, y1)
-        top.after(16, lambda: tick(elapsed + 16))
+        parent.after(16, lambda: tick(elapsed + 16))
 
-    btn = ttk.Button(top, text="EXECUTE!", command=stop)
+    btn = ttk.Button(container, text="EXECUTE!", command=stop)
     btn.pack(padx=12, pady=(0, 12), fill="x")
-    top.bind("<space>", lambda _e: stop())
-
-    _position_modal_bottom(parent, top, bottom_padding=28)
+    if host is None:
+        top.bind("<space>", lambda _e: stop())
 
     tick(0)
-    top.wait_window()
+    if host is None:
+        _position_modal_bottom(parent, top, bottom_padding=28)
+        top.wait_window()
+    else:
+        parent.wait_variable(done_var)
 
     timing = int(result["timing"])
     if timing > 95:

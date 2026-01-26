@@ -20,6 +20,7 @@ class TacticalWrestlingApp:
         self.turn = "player"  # "player" | "cpu"
         self.game_over = False
         self._player_bonus_available = False
+        self._in_grapple_followup_picker = False
 
         self._build_ui()
         self._log("Match start. Win only by Pinfall or Submission.")
@@ -83,23 +84,31 @@ class TacticalWrestlingApp:
         )
         self.turn_label.pack(fill="x", padx=8)
 
-        # Log
-        log_frame = tk.Frame(self.root, bg="#000", bd=2, relief="sunken")
-        log_frame.pack(fill="both", expand=True, padx=8, pady=8)
-        log_scroll = tk.Scrollbar(log_frame)
+        # Center area: either Log (default) or an embedded "modal" panel.
+        self.center_frame = tk.Frame(self.root, bg="#101010")
+        self.center_frame.pack(fill="x", padx=8, pady=8)
+
+        # Log (kept small so moves are prominent)
+        self.log_frame = tk.Frame(self.center_frame, bg="#000", bd=2, relief="sunken")
+        self.log_frame.pack(fill="x", expand=False)
+        log_scroll = tk.Scrollbar(self.log_frame)
         log_scroll.pack(side="right", fill="y")
         self.log_text = tk.Text(
-            log_frame,
+            self.log_frame,
             bg="#000",
             fg="#b6ffb6",
             font=("Consolas", 11),
-            height=12,
+            height=6,
             state="disabled",
             wrap="word",
             yscrollcommand=log_scroll.set,
         )
         self.log_text.pack(side="left", fill="both", expand=True)
         log_scroll.config(command=self.log_text.yview)
+
+        # Allow finger/drag scrolling on the log.
+        self.log_text.bind("<ButtonPress-1>", lambda e: self.log_text.scan_mark(e.x, e.y))
+        self.log_text.bind("<B1-Motion>", lambda e: self.log_text.scan_dragto(e.x, e.y, gain=1))
 
         # Log coloring
         self.log_text.tag_configure("you", foreground="#67ff8a", font=("Consolas", 11, "bold"))
@@ -109,9 +118,16 @@ class TacticalWrestlingApp:
         self.log_text.tag_configure("grit", foreground="#c77dff")
         self.log_text.tag_configure("sys", foreground="#cccccc")
 
-        # Moves / context menu
+        # Embedded modal panel (replaces log temporarily)
+        self.modal_frame = tk.Frame(self.center_frame, bg="#0b0b0b", bd=2, relief="sunken")
+        self.modal_title = tk.Label(self.modal_frame, text="", font=("Arial", 11, "bold"), fg="#f2f2f2", bg="#0b0b0b")
+        self.modal_title.pack(fill="x", padx=10, pady=(10, 6))
+        self.modal_body = tk.Frame(self.modal_frame, bg="#0b0b0b")
+        self.modal_body.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        # Moves / context menu (bigger + scrollable)
         self.moves_frame = tk.Frame(self.root, bg="#101010")
-        self.moves_frame.pack(fill="x", padx=8, pady=(0, 8))
+        self.moves_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.moves_title = tk.Label(
             self.moves_frame,
             text="Moves",
@@ -121,7 +137,7 @@ class TacticalWrestlingApp:
         )
         self.moves_title.pack(anchor="w", pady=(0, 6))
         # Scrollable move area so options never get cut off.
-        self.moves_canvas = tk.Canvas(self.moves_frame, bg="#101010", highlightthickness=0, height=240)
+        self.moves_canvas = tk.Canvas(self.moves_frame, bg="#101010", highlightthickness=0, height=420)
         self.moves_scroll = tk.Scrollbar(self.moves_frame, orient="vertical", command=self.moves_canvas.yview)
         self.moves_canvas.configure(yscrollcommand=self.moves_scroll.set)
         self.moves_scroll.pack(side="right", fill="y")
@@ -145,6 +161,24 @@ class TacticalWrestlingApp:
             self.moves_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
 
         self.moves_canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+        # Allow finger/drag scrolling in the moves list.
+        self.moves_canvas.bind("<ButtonPress-1>", lambda e: self.moves_canvas.scan_mark(e.x, e.y))
+        self.moves_canvas.bind("<B1-Motion>", lambda e: self.moves_canvas.scan_dragto(e.x, e.y, gain=1))
+
+    def _show_modal(self, title: str) -> None:
+        self.modal_title.config(text=title)
+        for w in list(self.modal_body.winfo_children()):
+            w.destroy()
+        if self.log_frame.winfo_ismapped():
+            self.log_frame.pack_forget()
+        self.modal_frame.pack(fill="x", expand=False)
+
+    def _hide_modal(self) -> None:
+        if self.modal_frame.winfo_ismapped():
+            self.modal_frame.pack_forget()
+        if not self.log_frame.winfo_ismapped():
+            self.log_frame.pack(fill="x", expand=False)
 
     def _log(self, msg: str) -> None:
         if self.game_over:
@@ -200,6 +234,8 @@ class TacticalWrestlingApp:
     # --- Moves filtering ---
     def _move_is_legal(self, move_name: str, user: Wrestler, target: Wrestler) -> bool:
         move = MOVES[move_name]
+        if move.get("only_in_grapple_followup") and not self._in_grapple_followup_picker:
+            return False
         ru = move["req_user_state"]
         rt = move["req_target_state"]
         if ru != "ANY" and ru != user.state.value:
@@ -227,31 +263,33 @@ class TacticalWrestlingApp:
         if not options:
             return None
 
-        top = tk.Toplevel(self.root)
-        top.title("Choose Grapple")
-        top.transient(self.root)
-        top.grab_set()
-        top.resizable(False, False)
+        self._in_grapple_followup_picker = True
+        try:
+            self._show_modal("Choose Grapple")
+            chosen_var: tk.StringVar = tk.StringVar(value="")
+            done_var: tk.BooleanVar = tk.BooleanVar(value=False)
 
-        tk.Label(top, text="Pick a grapple to execute:", font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 8))
-
-        chosen = {"value": None}
-
-        for name in options[:6]:
-            mv = MOVES[name]
-            cost = int(mv["cost"])
-            dmg = int(mv["damage"])
-            btn = ttk.Button(
-                top,
-                text=f"{name} (Cost {cost}, Dmg {dmg})",
-                command=lambda n=name: (chosen.__setitem__("value", n), top.destroy()),
+            tk.Label(self.modal_body, text="Pick a grapple follow-up:", fg="#f2f2f2", bg="#0b0b0b", font=("Arial", 10, "bold")).pack(
+                anchor="w", pady=(0, 8)
             )
-            btn.pack(fill="x", padx=12, pady=4)
 
-        ttk.Button(top, text="Cancel", command=top.destroy).pack(fill="x", padx=12, pady=(10, 12))
-        self._position_modal_bottom(top, bottom_padding=28)
-        top.wait_window()
-        return chosen["value"]
+            for name in options[:10]:
+                mv = MOVES[name]
+                cost = int(mv["cost"])
+                dmg = int(mv["damage"])
+                ttk.Button(
+                    self.modal_body,
+                    text=f"{name} (Cost {cost}, Dmg {dmg})",
+                    command=lambda n=name: (chosen_var.set(n), done_var.set(True)),
+                ).pack(fill="x", pady=4)
+
+            ttk.Button(self.modal_body, text="Cancel", command=lambda: done_var.set(True)).pack(fill="x", pady=(10, 0))
+            self.root.wait_variable(done_var)
+            val = chosen_var.get().strip() or None
+            return val
+        finally:
+            self._in_grapple_followup_picker = False
+            self._hide_modal()
 
     def _refresh_player_buttons(self) -> None:
         for child in list(self.moves_grid.winfo_children()):
@@ -398,78 +436,70 @@ class TacticalWrestlingApp:
 
         Grit is spent inside this dialog for DODGE/REVERSAL.
         """
-        top = tk.Toplevel(self.root)
-        top.title("React!")
-        top.transient(self.root)
-        top.grab_set()
-        top.resizable(False, False)
+        self._show_modal("React!")
+        try:
+            tk.Label(
+                self.modal_body,
+                text=f"CPU attacks! Incoming damage: {incoming_damage}",
+                fg="#f2f2f2",
+                bg="#0b0b0b",
+                font=("Arial", 11, "bold"),
+            ).pack(pady=(0, 6))
+            tk.Label(
+                self.modal_body,
+                text=f"Your Grit: {self.player.grit}",
+                fg="#aaa",
+                bg="#0b0b0b",
+                font=("Arial", 9),
+            ).pack(pady=(0, 10))
 
-        tk.Label(
-            top,
-            text=f"CPU attacks! Incoming damage: {incoming_damage}",
-            font=("Arial", 11, "bold"),
-        ).pack(padx=12, pady=(12, 6))
-        grit_lbl = tk.Label(top, text=f"Your Grit: {self.player.grit}", font=("Arial", 9), fg="#555")
-        grit_lbl.pack(padx=12, pady=(0, 10))
+            choice_var: tk.StringVar = tk.StringVar(value="BRACE")
+            done_var: tk.BooleanVar = tk.BooleanVar(value=False)
 
-        result = {"chosen": False, "choice": "BRACE"}
+            def pick(choice: str) -> None:
+                choice_var.set(choice)
+                done_var.set(True)
 
-        def choose_brace() -> None:
-            if result["chosen"]:
-                return
-            result["chosen"] = True
-            result["choice"] = "BRACE"
-            top.destroy()
+            ttk.Button(self.modal_body, text="Brace (0 Grit) – Take 50%", command=lambda: pick("BRACE")).pack(fill="x", pady=4)
 
-        def choose_dodge() -> None:
-            if result["chosen"]:
-                return
-            if not self.player.spend_grit(2):
-                return
-            result["chosen"] = True
-            result["choice"] = "DODGE"
-            top.destroy()
+            b2 = ttk.Button(self.modal_body, text="Dodge (2 Grit) – Skill check", command=lambda: pick("DODGE"))
+            b2.pack(fill="x", pady=4)
+            if self.player.grit < 2:
+                b2.state(["disabled"])
 
-        def choose_reversal() -> None:
-            if result["chosen"]:
-                return
-            if not self.player.spend_grit(4):
-                return
-            result["chosen"] = True
-            result["choice"] = "REVERSAL"
-            top.destroy()
+            b3 = ttk.Button(self.modal_body, text="Reversal (4 Grit) – Skill check", command=lambda: pick("REVERSAL"))
+            b3.pack(fill="x", pady=4)
+            if self.player.grit < 4:
+                b3.state(["disabled"])
 
-        btns = tk.Frame(top)
-        btns.pack(padx=12, pady=(0, 12), fill="x")
+            self.root.wait_variable(done_var)
+            choice = choice_var.get()
 
-        b1 = ttk.Button(btns, text="Brace (0 Grit) – Take 50%", command=choose_brace)
-        b1.pack(fill="x", pady=4)
+            # Spend grit here (so player sees it immediately in HUD after returning)
+            if choice == "DODGE":
+                self.player.spend_grit(2)
+            elif choice == "REVERSAL":
+                self.player.spend_grit(4)
 
-        b2 = ttk.Button(btns, text="Dodge (2 Grit) – 50% take 0", command=choose_dodge)
-        b2.pack(fill="x", pady=4)
-        if self.player.grit < 2:
-            b2.state(["disabled"])
-
-        b3 = ttk.Button(btns, text="Reversal (4 Grit) – 30% reverse", command=choose_reversal)
-        b3.pack(fill="x", pady=4)
-        if self.player.grit < 4:
-            b3.state(["disabled"])
-
-        top.protocol("WM_DELETE_WINDOW", choose_brace)
-        self._position_modal_bottom(top, bottom_padding=28)
-        top.wait_window()
-        return result
+            return {"chosen": True, "choice": choice}
+        finally:
+            self._hide_modal()
 
     def _reaction_skill_check(self) -> float:
         """Return a performance score 0..1 based on a random minigame."""
         choice = random.choice(["qte", "lockup", "overunder"])
         if choice == "qte":
-            out = grapple_qte_minigame(
-                self.root,
-                title="React Timing",
-                prompt="React! Nail the timing to improve your odds.",
-                duration_ms=2600,
-            )
+            self._show_modal("React Timing")
+            try:
+                out = grapple_qte_minigame(
+                    self.root,
+                    title="React Timing",
+                    prompt="React! Nail the timing to improve your odds.",
+                    duration_ms=2600,
+                    host=self.modal_body,
+                )
+            finally:
+                self._hide_modal()
             tier = out["tier"]
             if tier == "CRIT":
                 return 1.0
@@ -479,14 +509,28 @@ class TacticalWrestlingApp:
                 return 0.4
             return 0.0
         if choice == "lockup":
-            ok = lockup_minigame(self.root, title="React Struggle", prompt="React! PUSH/HOLD to improve your odds.")
+            self._show_modal("React Struggle")
+            try:
+                ok = lockup_minigame(
+                    self.root,
+                    title="React Struggle",
+                    prompt="React! PUSH/HOLD to improve your odds.",
+                    host=self.modal_body,
+                )
+            finally:
+                self._hide_modal()
             return 1.0 if ok else 0.0
-        ok = submission_minigame(
-            self.root,
-            title="React Read",
-            prompt="React! Call HIGHER/LOWER correctly to improve your odds.",
-            victim_hp_pct=self.player.hp_pct(),
-        )
+        self._show_modal("React Read")
+        try:
+            ok = submission_minigame(
+                self.root,
+                title="React Read",
+                prompt="React! Call HIGHER/LOWER correctly to improve your odds.",
+                victim_hp_pct=self.player.hp_pct(),
+                host=self.modal_body,
+            )
+        finally:
+            self._hide_modal()
         return 1.0 if ok else 0.0
 
     # --- Core move execution ---
@@ -547,11 +591,16 @@ class TacticalWrestlingApp:
 
         # Lock-up (push/hold) creates a grapple opportunity.
         if move_name == "Lock Up":
-            player_won = lockup_minigame(
-                self.root,
-                title="Lock Up",
-                prompt="Tie-up! PUSH or HOLD to fight for position.",
-            )
+            self._show_modal("Lock Up")
+            try:
+                player_won = lockup_minigame(
+                    self.root,
+                    title="Lock Up",
+                    prompt="Tie-up! PUSH or HOLD to fight for position.",
+                    host=self.modal_body,
+                )
+            finally:
+                self._hide_modal()
 
             attacker_won = player_won if attacker.is_player else (not player_won)
             if attacker_won:
@@ -575,23 +624,33 @@ class TacticalWrestlingApp:
         # Pin / Submission resolve match-ending conditions.
         if mtype == "Pin":
             if attacker.is_player:
-                ok = pin_minigame(
-                    self.root,
-                    title="Pin Attempt",
-                    prompt="PIN! Stop the marker in the green window to score the fall.",
-                    victim_hp_pct=defender.hp_pct(),
-                )
+                self._show_modal("Pin Attempt")
+                try:
+                    ok = pin_minigame(
+                        self.root,
+                        title="Pin Attempt",
+                        prompt="PIN! Stop the marker in the green window to score the fall.",
+                        victim_hp_pct=defender.hp_pct(),
+                        host=self.modal_body,
+                    )
+                finally:
+                    self._hide_modal()
                 if ok:
                     self._end_match("YOU", "PINFALL")
                 else:
                     self._log("They kicked out!")
             else:
-                ok = pin_minigame(
-                    self.root,
-                    title="Kick Out!",
-                    prompt="KICK OUT! Stop the marker in the green window to survive.",
-                    victim_hp_pct=defender.hp_pct(),
-                )
+                self._show_modal("Kick Out")
+                try:
+                    ok = pin_minigame(
+                        self.root,
+                        title="Kick Out!",
+                        prompt="KICK OUT! Stop the marker in the green window to survive.",
+                        victim_hp_pct=defender.hp_pct(),
+                        host=self.modal_body,
+                    )
+                finally:
+                    self._hide_modal()
                 if ok:
                     self._log("You kicked out!")
                 else:
@@ -601,23 +660,33 @@ class TacticalWrestlingApp:
 
         if mtype == "Submission":
             if attacker.is_player:
-                ok = submission_minigame(
-                    self.root,
-                    title="Submission Attempt",
-                    prompt="Finish it! Call HIGHER or LOWER correctly.",
-                    victim_hp_pct=defender.hp_pct(),
-                )
+                self._show_modal("Submission")
+                try:
+                    ok = submission_minigame(
+                        self.root,
+                        title="Submission Attempt",
+                        prompt="Finish it! Call HIGHER or LOWER correctly.",
+                        victim_hp_pct=defender.hp_pct(),
+                        host=self.modal_body,
+                    )
+                finally:
+                    self._hide_modal()
                 if ok:
                     self._end_match("YOU", "SUBMISSION")
                 else:
                     self._log("They fought out of the hold!")
             else:
-                ok = submission_minigame(
-                    self.root,
-                    title="Escape Submission!",
-                    prompt="Escape! Call HIGHER or LOWER correctly to survive.",
-                    victim_hp_pct=defender.hp_pct(),
-                )
+                self._show_modal("Escape Submission")
+                try:
+                    ok = submission_minigame(
+                        self.root,
+                        title="Escape Submission!",
+                        prompt="Escape! Call HIGHER or LOWER correctly to survive.",
+                        victim_hp_pct=defender.hp_pct(),
+                        host=self.modal_body,
+                    )
+                finally:
+                    self._hide_modal()
                 if ok:
                     self._log("You escaped the submission!")
                 else:
@@ -627,11 +696,16 @@ class TacticalWrestlingApp:
 
         # Grapple QTE (player only) – restores the old timing minigame feel.
         if mtype == "Grapple" and attacker.is_player and int(move.get("damage", 0)) > 0:
-            outcome = grapple_qte_minigame(
-                self.root,
-                title="Grapple Timing",
-                prompt=f"{move_name}! Hit the timing window.",
-            )
+            self._show_modal("Grapple Timing")
+            try:
+                outcome = grapple_qte_minigame(
+                    self.root,
+                    title="Grapple Timing",
+                    prompt=f"{move_name}! Hit the timing window.",
+                    host=self.modal_body,
+                )
+            finally:
+                self._hide_modal()
             tier = outcome["tier"]
             timing = int(outcome["timing"])
             mult = float(outcome["multiplier"])

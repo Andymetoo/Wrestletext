@@ -112,11 +112,12 @@ MOVES: Dict[str, Move] = {
     "Irish Whip": {
         "damage": 0,
         "cost": 3,
-        "type": "Setup",
+        "type": "Grapple",
         "req_user_state": "STANDING",
         "req_target_state": "STANDING",
-        "flavor_text": "You send them to the ropes with an Irish Whip!",
+        "flavor_text": "Sends them to the ropes with an Irish Whip!",
         "set_target_state": "RUNNING",
+        "only_in_grapple_followup": True,
     },
     "Clothesline": {
         "damage": 10,
