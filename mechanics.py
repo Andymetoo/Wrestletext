@@ -9,6 +9,46 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
+def _apply_embedded_theme(container: tk.Misc) -> dict[str, str]:
+    """Apply a high-contrast theme for embedded widgets.
+
+    On some Tk builds (notably Android/Pydroid3), default fg/bg can make
+    text/buttons effectively invisible on dark hosts.
+    """
+    bg = "#0b0b0b"
+    fg = "#f2f2f2"
+    subfg = "#b0b0b0"
+    try:
+        container.configure(bg=bg)
+    except tk.TclError:
+        pass
+    try:
+        style = ttk.Style(container)
+        style.configure("Embed.TButton", padding=8)
+        style.configure("Embed.TFrame", background=bg)
+        style.configure("Embed.TLabel", background=bg, foreground=fg)
+    except tk.TclError:
+        pass
+    return {"bg": bg, "fg": fg, "subfg": subfg}
+
+
+def _embedded_content_width(container: tk.Misc, *, default: int = 320, max_width: int = 360) -> int:
+    """Return a conservative content width for embedded UIs.
+
+    Some mobile wrappers only show the left part of a large Tk window.
+    Clamping to a phone-ish width keeps centered UIs from rendering off-screen.
+    """
+    try:
+        container.update_idletasks()
+        w = int(container.winfo_width())
+    except tk.TclError:
+        return default
+    if w <= 1:
+        return default
+    # Subtract a bit for padding/scrollbars; clamp to keep it phone-friendly.
+    return max(240, min(max_width, w - 24))
+
+
 def _position_modal_bottom(parent: tk.Misc, top: tk.Toplevel, *, bottom_padding: int = 20) -> None:
     """Position a modal near the bottom-center of the parent window."""
     try:
@@ -55,19 +95,39 @@ def pin_minigame(
         container = host
         for w in list(container.winfo_children()):
             w.destroy()
+        colors = _apply_embedded_theme(container)
 
-    tk.Label(container, text=prompt, font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 6))
+    if host is None:
+        colors = {"bg": None, "fg": None, "subfg": "#555"}
+
+    embedded = host is not None
+    content_w = _embedded_content_width(container) if embedded else 320
+
+    tk.Label(
+        container,
+        text=prompt,
+        font=("Arial", 11, "bold"),
+        bg=colors["bg"],
+        fg=colors["fg"],
+        justify=("left" if embedded else "center"),
+        anchor=("w" if embedded else "center"),
+        wraplength=(content_w if embedded else 0),
+    ).pack(padx=12, pady=(12, 6), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
     tk.Label(
         container,
         text="Stop the moving marker inside the green window.",
         font=("Arial", 9),
-        fg="#555",
-    ).pack(padx=12, pady=(0, 10))
+        bg=colors["bg"],
+        fg=colors["subfg"],
+        justify=("left" if embedded else "center"),
+        anchor=("w" if embedded else "center"),
+        wraplength=(content_w if embedded else 0),
+    ).pack(padx=12, pady=(0, 10), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
 
-    width = 320
+    width = content_w
     height = 50
     canvas = tk.Canvas(container, width=width, height=height, bg="#111", highlightthickness=0)
-    canvas.pack(padx=12, pady=(0, 10))
+    canvas.pack(padx=12, pady=(0, 10), anchor="w")
 
     # Lower HP => bigger success window.
     min_window = 22
@@ -120,7 +180,7 @@ def pin_minigame(
         canvas.coords(marker, x0, y0, x1, y1)
         parent.after(16, lambda: tick(elapsed + 16))
 
-    btn = ttk.Button(container, text="STOP!", command=stop)
+    btn = ttk.Button(container, text="STOP!", command=stop, style=("Embed.TButton" if host is not None else "TButton"))
     btn.pack(padx=12, pady=(0, 12), fill="x")
     if host is None:
         top.bind("<space>", lambda _e: stop())
@@ -174,17 +234,39 @@ def submission_minigame(
         container = host
         for w in list(container.winfo_children()):
             w.destroy()
+        colors = _apply_embedded_theme(container)
 
-    tk.Label(container, text=prompt, font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 6))
+    if host is None:
+        colors = {"bg": None, "fg": None, "subfg": "#555"}
 
-    status = tk.Label(container, text=f"Streak: {streak}/{required}", font=("Arial", 9), fg="#555")
-    status.pack(padx=12, pady=(0, 8))
+    embedded = host is not None
+    content_w = _embedded_content_width(container) if embedded else 320
 
-    current_lbl = tk.Label(container, text=f"CURRENT: {current}", font=("Arial", 18, "bold"))
-    current_lbl.pack(padx=12, pady=(0, 10))
+    tk.Label(
+        container,
+        text=prompt,
+        font=("Arial", 11, "bold"),
+        bg=colors["bg"],
+        fg=colors["fg"],
+        justify=("left" if embedded else "center"),
+        anchor=("w" if embedded else "center"),
+        wraplength=(content_w if embedded else 0),
+    ).pack(padx=12, pady=(12, 6), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
 
-    hint = tk.Label(container, text="Will the NEXT number be higher or lower?", font=("Arial", 9))
-    hint.pack(padx=12, pady=(0, 10))
+    status = tk.Label(
+        container,
+        text=f"Streak: {streak}/{required}",
+        font=("Arial", 9),
+        bg=colors["bg"],
+        fg=colors["subfg"],
+    )
+    status.pack(padx=12, pady=(0, 8), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
+
+    current_lbl = tk.Label(container, text=f"CURRENT: {current}", font=("Arial", 18, "bold"), bg=colors["bg"], fg=colors["fg"])
+    current_lbl.pack(padx=12, pady=(0, 10), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
+
+    hint = tk.Label(container, text="Will the NEXT number be higher or lower?", font=("Arial", 9), bg=colors["bg"], fg=colors["fg"])
+    hint.pack(padx=12, pady=(0, 10), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
 
     result = {"done": False, "success": False}
     done_var = tk.BooleanVar(value=False)
@@ -215,7 +297,7 @@ def submission_minigame(
         nxt = next_val()
         ok = (direction == "HIGHER" and nxt > current) or (direction == "LOWER" and nxt < current)
 
-        hint.config(text=f"NEXT: {nxt} (was {current})", fg="#333")
+        hint.config(text=f"NEXT: {nxt} (was {current})", fg=(colors["subfg"] if embedded else "#333"))
         current = nxt
         current_lbl.config(text=f"CURRENT: {current}")
 
@@ -238,12 +320,12 @@ def submission_minigame(
     # Auto-resolve to avoid indefinite waits on mobile.
     parent.after(timeout_ms, timeout)
 
-    btns = tk.Frame(container)
+    btns = tk.Frame(container, bg=colors["bg"])
     btns.pack(padx=12, pady=(0, 12), fill="x")
 
-    b1 = ttk.Button(btns, text="LOWER", command=lambda: choose("LOWER"))
+    b1 = ttk.Button(btns, text="LOWER", command=lambda: choose("LOWER"), style=("Embed.TButton" if host is not None else "TButton"))
     b1.pack(fill="x", pady=4)
-    b2 = ttk.Button(btns, text="HIGHER", command=lambda: choose("HIGHER"))
+    b2 = ttk.Button(btns, text="HIGHER", command=lambda: choose("HIGHER"), style=("Embed.TButton" if host is not None else "TButton"))
     b2.pack(fill="x", pady=4)
 
     if host is None:
@@ -281,21 +363,44 @@ def lockup_minigame(
         container = host
         for w in list(container.winfo_children()):
             w.destroy()
+        colors = _apply_embedded_theme(container)
 
-    tk.Label(container, text=prompt, font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 6))
-    tk.Label(container, text="Get closer to 15 without going over.", font=("Arial", 9), fg="#555").pack(
-        padx=12, pady=(0, 10)
-    )
+    if host is None:
+        colors = {"bg": None, "fg": None, "subfg": "#555"}
+
+    embedded = host is not None
+    content_w = _embedded_content_width(container) if embedded else 320
+
+    tk.Label(
+        container,
+        text=prompt,
+        font=("Arial", 11, "bold"),
+        bg=colors["bg"],
+        fg=colors["fg"],
+        justify=("left" if embedded else "center"),
+        anchor=("w" if embedded else "center"),
+        wraplength=(content_w if embedded else 0),
+    ).pack(padx=12, pady=(12, 6), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
+    tk.Label(
+        container,
+        text="Get closer to 15 without going over.",
+        font=("Arial", 9),
+        bg=colors["bg"],
+        fg=colors["subfg"],
+        justify=("left" if embedded else "center"),
+        anchor=("w" if embedded else "center"),
+        wraplength=(content_w if embedded else 0),
+    ).pack(padx=12, pady=(0, 10), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
 
     scores = {"p": 0, "c": 0}
     result = {"done": False, "success": False}
     done_var = tk.BooleanVar(value=False)
 
-    status = tk.Label(container, text="YOU: 0   |   CPU: 0", font=("Arial", 12, "bold"))
-    status.pack(padx=12, pady=(0, 10))
+    status = tk.Label(container, text="YOU: 0   |   CPU: 0", font=("Arial", 12, "bold"), bg=colors["bg"], fg=colors["fg"])
+    status.pack(padx=12, pady=(0, 10), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
 
-    log = tk.Label(container, text="", font=("Arial", 9), fg="#333")
-    log.pack(padx=12, pady=(0, 10))
+    log = tk.Label(container, text="", font=("Arial", 9), bg=colors["bg"], fg=colors["subfg"])
+    log.pack(padx=12, pady=(0, 10), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
 
     def refresh() -> None:
         status.config(text=f"YOU: {scores['p']}   |   CPU: {scores['c']}")
@@ -344,10 +449,10 @@ def lockup_minigame(
         else:
             finish(False, "CPU muscles you around and takes control!")
 
-    btns = tk.Frame(container)
+    btns = tk.Frame(container, bg=colors["bg"])
     btns.pack(padx=12, pady=(0, 12), fill="x")
-    ttk.Button(btns, text="PUSH", command=push).pack(fill="x", pady=4)
-    ttk.Button(btns, text="HOLD", command=hold).pack(fill="x", pady=4)
+    ttk.Button(btns, text="PUSH", command=push, style=("Embed.TButton" if host is not None else "TButton")).pack(fill="x", pady=4)
+    ttk.Button(btns, text="HOLD", command=hold, style=("Embed.TButton" if host is not None else "TButton")).pack(fill="x", pady=4)
 
     refresh()
     parent.after(timeout_ms, timeout)
@@ -388,19 +493,39 @@ def grapple_qte_minigame(
         container = host
         for w in list(container.winfo_children()):
             w.destroy()
+        colors = _apply_embedded_theme(container)
 
-    tk.Label(container, text=prompt, font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 6))
+    if host is None:
+        colors = {"bg": None, "fg": None, "subfg": "#555"}
+
+    embedded = host is not None
+    content_w = _embedded_content_width(container) if embedded else 320
+
+    tk.Label(
+        container,
+        text=prompt,
+        font=("Arial", 11, "bold"),
+        bg=colors["bg"],
+        fg=colors["fg"],
+        justify=("left" if embedded else "center"),
+        anchor=("w" if embedded else "center"),
+        wraplength=(content_w if embedded else 0),
+    ).pack(padx=12, pady=(12, 6), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
     tk.Label(
         container,
         text="Stop in the green zone (70–95). Over 95 is a botch.",
         font=("Arial", 9),
-        fg="#555",
-    ).pack(padx=12, pady=(0, 10))
+        bg=colors["bg"],
+        fg=colors["subfg"],
+        justify=("left" if embedded else "center"),
+        anchor=("w" if embedded else "center"),
+        wraplength=(content_w if embedded else 0),
+    ).pack(padx=12, pady=(0, 10), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
 
-    width = 320
+    width = content_w
     height = 56
     canvas = tk.Canvas(container, width=width, height=height, bg="#111", highlightthickness=0)
-    canvas.pack(padx=12, pady=(0, 10))
+    canvas.pack(padx=12, pady=(0, 10), anchor="w")
 
     def pct_to_x(p: float) -> int:
         return int(_clamp(p, 0.0, 100.0) / 100.0 * (width - 1))
@@ -451,7 +576,7 @@ def grapple_qte_minigame(
         canvas.coords(marker, x0, y0, x1, y1)
         parent.after(16, lambda: tick(elapsed + 16))
 
-    btn = ttk.Button(container, text="EXECUTE!", command=stop)
+    btn = ttk.Button(container, text="EXECUTE!", command=stop, style=("Embed.TButton" if host is not None else "TButton"))
     btn.pack(padx=12, pady=(0, 12), fill="x")
     if host is None:
         top.bind("<space>", lambda _e: stop())
@@ -514,9 +639,34 @@ def chain_wrestling_game(
         container = host
         for w in list(container.winfo_children()):
             w.destroy()
+        colors = _apply_embedded_theme(container)
 
-    tk.Label(container, text=prompt, font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 6))
-    tk.Label(container, text="Choose blindly. No hints.", font=("Arial", 9), fg="#555").pack(padx=12, pady=(0, 10))
+    if host is None:
+        colors = {"bg": None, "fg": None, "subfg": "#555"}
+
+    embedded = host is not None
+    content_w = _embedded_content_width(container) if embedded else 320
+
+    tk.Label(
+        container,
+        text=prompt,
+        font=("Arial", 11, "bold"),
+        bg=colors["bg"],
+        fg=colors["fg"],
+        justify=("left" if embedded else "center"),
+        anchor=("w" if embedded else "center"),
+        wraplength=(content_w if embedded else 0),
+    ).pack(padx=12, pady=(12, 6), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
+    tk.Label(
+        container,
+        text="Choose blindly. No hints.",
+        font=("Arial", 9),
+        bg=colors["bg"],
+        fg=colors["subfg"],
+        justify=("left" if embedded else "center"),
+        anchor=("w" if embedded else "center"),
+        wraplength=(content_w if embedded else 0),
+    ).pack(padx=12, pady=(0, 10), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
 
     result = {"done": False, "player": "", "cpu": "", "result": "TIE"}
     done_var = tk.BooleanVar(value=False)
@@ -527,8 +677,8 @@ def chain_wrestling_game(
         # Auto-pick for player to keep match moving.
         pick(random.choice(choices))
 
-    status = tk.Label(container, text="", font=("Arial", 10, "bold"))
-    status.pack(padx=12, pady=(0, 10))
+    status = tk.Label(container, text="", font=("Arial", 10, "bold"), bg=colors["bg"], fg=colors["fg"])
+    status.pack(padx=12, pady=(0, 10), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
 
     def finish(msg: str) -> None:
         status.config(text=msg)
@@ -556,10 +706,12 @@ def chain_wrestling_game(
         result["done"] = True
         finish(f"Loss! {cpu_choice} beats {player_choice}.")
 
-    btns = tk.Frame(container)
+    btns = tk.Frame(container, bg=colors["bg"])
     btns.pack(padx=12, pady=(0, 12), fill="x")
     for c in choices:
-        ttk.Button(btns, text=c, command=lambda cc=c: pick(cc)).pack(fill="x", pady=4)
+        ttk.Button(btns, text=c, command=lambda cc=c: pick(cc), style=("Embed.TButton" if host is not None else "TButton")).pack(
+            fill="x", pady=4
+        )
 
     parent.after(12000, timeout)
 

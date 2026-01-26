@@ -175,6 +175,13 @@ class TacticalWrestlingApp:
         self.modal_body = tk.Frame(self.modal_frame, bg="#0b0b0b")
         self.modal_body.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
+        # Inner content area for embedded modals.
+        # Keep it left-anchored with a capped width so phones that only show the
+        # left part of a wider Tk window still see the whole minigame.
+        self.modal_content = tk.Frame(self.modal_body, bg="#0b0b0b")
+        self.modal_content.pack(fill="y", expand=True, anchor="nw")
+        self.modal_content.pack_propagate(False)
+
         self.moves_grid = tk.Frame(self.moves_canvas, bg="#101010")
         self.moves_grid.columnconfigure(0, weight=1)
         self.moves_grid.columnconfigure(1, weight=1)
@@ -295,17 +302,35 @@ class TacticalWrestlingApp:
 
     def _show_modal(self, title: str) -> None:
         self.modal_title.config(text=title)
-        for w in list(self.modal_body.winfo_children()):
+        for w in list(self.modal_content.winfo_children()):
             w.destroy()
+        if self.moves_title.winfo_ismapped():
+            self.moves_title.pack_forget()
         if self.moves_canvas.winfo_ismapped():
             self.moves_canvas.pack_forget()
         if self.moves_scroll.winfo_ismapped():
             self.moves_scroll.pack_forget()
         self.modal_frame.pack(fill="both", expand=True)
 
+        # Clamp modal content width to a phone-ish size and anchor left.
+        try:
+            self.root.update_idletasks()
+            w = int(self.moves_frame.winfo_width())
+            if w <= 1:
+                w = int(self.root.winfo_width())
+        except tk.TclError:
+            w = 360
+        content_w = max(240, min(380, w - 28))
+        try:
+            self.modal_content.configure(width=content_w)
+        except tk.TclError:
+            pass
+
     def _hide_modal(self) -> None:
         if self.modal_frame.winfo_ismapped():
             self.modal_frame.pack_forget()
+        if not self.moves_title.winfo_ismapped():
+            self.moves_title.pack(anchor="w", pady=(0, 6))
         if not self.moves_scroll.winfo_ismapped():
             self.moves_scroll.pack(side="right", fill="y")
         if not self.moves_canvas.winfo_ismapped():
@@ -660,14 +685,14 @@ class TacticalWrestlingApp:
         self._show_modal("React!")
         try:
             tk.Label(
-                self.modal_body,
+                self.modal_content,
                 text=f"CPU attacks! Incoming damage: {incoming_damage}",
                 fg="#f2f2f2",
                 bg="#0b0b0b",
                 font=("Arial", 11, "bold"),
             ).pack(pady=(0, 6))
             tk.Label(
-                self.modal_body,
+                self.modal_content,
                 text=f"Your Grit: {self.player.grit}",
                 fg="#aaa",
                 bg="#0b0b0b",
@@ -687,14 +712,14 @@ class TacticalWrestlingApp:
                 choice_var.set(choice)
                 done_var.set(True)
 
-            ttk.Button(self.modal_body, text="Brace (0 Grit) – Take 50%", command=lambda: pick("BRACE")).pack(fill="x", pady=4)
+            ttk.Button(self.modal_content, text="Brace (0 Grit) – Take 50%", command=lambda: pick("BRACE")).pack(fill="x", pady=4)
 
-            b2 = ttk.Button(self.modal_body, text="Dodge (2 Grit) – Skill check", command=lambda: pick("DODGE"))
+            b2 = ttk.Button(self.modal_content, text="Dodge (2 Grit) – Skill check", command=lambda: pick("DODGE"))
             b2.pack(fill="x", pady=4)
             if self.player.grit < 2:
                 b2.state(["disabled"])
 
-            b3 = ttk.Button(self.modal_body, text="Reversal (4 Grit) – Skill check", command=lambda: pick("REVERSAL"))
+            b3 = ttk.Button(self.modal_content, text="Reversal (4 Grit) – Skill check", command=lambda: pick("REVERSAL"))
             b3.pack(fill="x", pady=4)
             if self.player.grit < 4:
                 b3.state(["disabled"])
@@ -726,7 +751,7 @@ class TacticalWrestlingApp:
                     title="React Timing",
                     prompt="React! Nail the timing to improve your odds.",
                     duration_ms=2600,
-                    host=self.modal_body,
+                    host=self.modal_content,
                 )
             finally:
                 self._hide_modal()
@@ -745,7 +770,7 @@ class TacticalWrestlingApp:
                     self.root,
                     title="React Struggle",
                     prompt="React! PUSH/HOLD to improve your odds.",
-                    host=self.modal_body,
+                    host=self.modal_content,
                 )
             finally:
                 self._hide_modal()
@@ -757,7 +782,7 @@ class TacticalWrestlingApp:
                 title="React Read",
                 prompt="React! Call HIGHER/LOWER correctly to improve your odds.",
                 victim_hp_pct=self.player.hp_pct(),
-                host=self.modal_body,
+                host=self.modal_content,
             )
         finally:
             self._hide_modal()
@@ -938,7 +963,7 @@ class TacticalWrestlingApp:
                         self.root,
                         title="Lock Up",
                         prompt="Clash! PUSH or HOLD to win position.",
-                        host=self.modal_body,
+                        host=self.modal_content,
                     )
                 finally:
                     self._hide_modal()
@@ -969,7 +994,7 @@ class TacticalWrestlingApp:
                         self.root,
                         title="Chain Wrestling",
                         prompt="POWER / SPEED / TECHNICAL",
-                        host=self.modal_body,
+                        host=self.modal_content,
                     )
                 finally:
                     self._hide_modal()
@@ -1011,7 +1036,7 @@ class TacticalWrestlingApp:
                         title="Pin Attempt",
                         prompt="PIN! Stop the marker in the green window to score the fall.",
                         victim_hp_pct=self._pin_victim_hp_pct(defender),
-                        host=self.modal_body,
+                        host=self.modal_content,
                     )
                 finally:
                     self._hide_modal()
@@ -1027,7 +1052,7 @@ class TacticalWrestlingApp:
                         title="Kick Out!",
                         prompt="KICK OUT! Stop the marker in the green window to survive.",
                         victim_hp_pct=self._pin_victim_hp_pct(defender),
-                        host=self.modal_body,
+                        host=self.modal_content,
                     )
                 finally:
                     self._hide_modal()
@@ -1047,7 +1072,7 @@ class TacticalWrestlingApp:
                         title="Submission Attempt",
                         prompt="Finish it! Call HIGHER or LOWER correctly.",
                         victim_hp_pct=defender.hp_pct(),
-                        host=self.modal_body,
+                        host=self.modal_content,
                     )
                 finally:
                     self._hide_modal()
@@ -1063,7 +1088,7 @@ class TacticalWrestlingApp:
                         title="Escape Submission!",
                         prompt="Escape! Call HIGHER or LOWER correctly to survive.",
                         victim_hp_pct=defender.hp_pct(),
-                        host=self.modal_body,
+                        host=self.modal_content,
                     )
                 finally:
                     self._hide_modal()
@@ -1096,7 +1121,7 @@ class TacticalWrestlingApp:
                     self.root,
                     title="Grapple Timing",
                     prompt=f"{move_name}! Hit the timing window.",
-                    host=self.modal_body,
+                    host=self.modal_content,
                 )
             finally:
                 self._hide_modal()
