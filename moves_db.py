@@ -35,6 +35,15 @@ MOVES: Dict[str, Move] = {
     },
 
     # --- Standing basics ---
+    "Lock Up": {
+        "damage": 0,
+        "cost": 2,
+        "type": "Setup",
+        "req_user_state": "STANDING",
+        "req_target_state": "STANDING",
+        "flavor_text": "Collar-and-elbow tie-up—fight for position!",
+        "notes": "Triggers push/hold minigame; winner earns a grapple follow-up.",
+    },
     "Jab": {
         "damage": 5,
         "cost": 2,
@@ -58,6 +67,24 @@ MOVES: Dict[str, Move] = {
         "req_user_state": "STANDING",
         "req_target_state": "STANDING",
         "flavor_text": "You hook the waist and snap them down!",
+        "set_target_state": "GROUNDED",
+    },
+    "DDT": {
+        "damage": 14,
+        "cost": 6,
+        "type": "Grapple",
+        "req_user_state": "STANDING",
+        "req_target_state": "STANDING",
+        "flavor_text": "Front facelock—DDT! Spiked to the canvas!",
+        "set_target_state": "GROUNDED",
+    },
+    "Powerbomb": {
+        "damage": 20,
+        "cost": 8,
+        "type": "Grapple",
+        "req_user_state": "STANDING",
+        "req_target_state": "STANDING",
+        "flavor_text": "You hoist them up—POWERBOMB! The ring shakes!",
         "set_target_state": "GROUNDED",
     },
 

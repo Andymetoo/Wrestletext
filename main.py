@@ -4,7 +4,7 @@ import random
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from mechanics import pin_minigame, submission_minigame
+from mechanics import grapple_qte_minigame, lockup_minigame, pin_minigame, submission_minigame
 from moves_db import MOVES
 from wrestler import MAX_HEALTH, Wrestler, WrestlerState
 
@@ -155,6 +155,40 @@ class TacticalWrestlingApp:
             return (type_order.get(t, 99), int(MOVES[n]["cost"]), n)
 
         return sorted(names, key=key)
+
+    def _available_grapple_finishes(self, user: Wrestler, target: Wrestler) -> list[str]:
+        moves = self._available_moves(user, target)
+        return [m for m in moves if MOVES[m].get("type") == "Grapple"]
+
+    def _choose_grapple_followup(self, user: Wrestler, target: Wrestler) -> str | None:
+        options = [m for m in self._available_grapple_finishes(user, target) if MOVES[m]["cost"] <= user.grit]
+        if not options:
+            return None
+
+        top = tk.Toplevel(self.root)
+        top.title("Choose Grapple")
+        top.transient(self.root)
+        top.grab_set()
+        top.resizable(False, False)
+
+        tk.Label(top, text="Pick a grapple to execute:", font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 8))
+
+        chosen = {"value": None}
+
+        for name in options[:6]:
+            mv = MOVES[name]
+            cost = int(mv["cost"])
+            dmg = int(mv["damage"])
+            btn = ttk.Button(
+                top,
+                text=f"{name} (Cost {cost}, Dmg {dmg})",
+                command=lambda n=name: (chosen.__setitem__("value", n), top.destroy()),
+            )
+            btn.pack(fill="x", padx=12, pady=4)
+
+        ttk.Button(top, text="Cancel", command=top.destroy).pack(fill="x", padx=12, pady=(10, 12))
+        top.wait_window()
+        return chosen["value"]
 
     def _refresh_player_buttons(self) -> None:
         for child in list(self.moves_grid.winfo_children()):
@@ -392,6 +426,33 @@ class TacticalWrestlingApp:
 
         mtype = move["type"]
 
+        # Lock-up (push/hold) creates a grapple opportunity.
+        if move_name == "Lock Up":
+            player_won = lockup_minigame(
+                self.root,
+                title="Lock Up",
+                prompt="Tie-up! PUSH or HOLD to fight for position.",
+            )
+
+            attacker_won = player_won if attacker.is_player else (not player_won)
+            if attacker_won:
+                self._log(f"{attacker.name} wins the tie-up!")
+                if attacker.is_player:
+                    follow = self._choose_grapple_followup(attacker, defender)
+                    if follow is None:
+                        self._log("No grapple available (or not enough Grit).")
+                    else:
+                        self._execute_move(attacker=attacker, defender=defender, move_name=follow)
+                else:
+                    options = [m for m in self._available_grapple_finishes(attacker, defender) if MOVES[m]["cost"] <= attacker.grit]
+                    if options:
+                        self._execute_move(attacker=attacker, defender=defender, move_name=random.choice(options))
+            else:
+                self._log(f"{defender.name} fights you off and breaks the tie-up!")
+
+            self._update_hud()
+            return
+
         # Pin / Submission resolve match-ending conditions.
         if mtype == "Pin":
             if attacker.is_player:
@@ -424,7 +485,7 @@ class TacticalWrestlingApp:
                 ok = submission_minigame(
                     self.root,
                     title="Submission Attempt",
-                    prompt="Finish it! Guess the secret number.",
+                    prompt="Finish it! Call HIGHER or LOWER correctly.",
                     victim_hp_pct=defender.hp_pct(),
                 )
                 if ok:
@@ -435,13 +496,51 @@ class TacticalWrestlingApp:
                 ok = submission_minigame(
                     self.root,
                     title="Escape Submission!",
-                    prompt="Escape! Guess the secret number before you tap.",
+                    prompt="Escape! Call HIGHER or LOWER correctly to survive.",
                     victim_hp_pct=defender.hp_pct(),
                 )
                 if ok:
                     self._log("You escaped the submission!")
                 else:
                     self._end_match("CPU", "SUBMISSION")
+            self._update_hud()
+            return
+
+        # Grapple QTE (player only) – restores the old timing minigame feel.
+        if mtype == "Grapple" and attacker.is_player and int(move.get("damage", 0)) > 0:
+            outcome = grapple_qte_minigame(
+                self.root,
+                title="Grapple Timing",
+                prompt=f"{move_name}! Hit the timing window.",
+            )
+            tier = outcome["tier"]
+            timing = int(outcome["timing"])
+            mult = float(outcome["multiplier"])
+
+            if tier == "BOTCH":
+                self._log(f"BOTCH! (Timing {timing}%) You crash and burn!")
+                self.player.take_damage(6)
+            else:
+                final = max(1, int(int(move["damage"]) * mult))
+                if tier == "CRIT":
+                    self._log(f"PERFECT! (Timing {timing}%)")
+                elif tier == "HIT":
+                    self._log(f"GOOD HIT! (Timing {timing}%)")
+                else:
+                    self._log(f"WEAK... (Timing {timing}%)")
+                defender.take_damage(final)
+                self._log(f"{defender.name} takes {final} damage.")
+
+            # Apply state transitions after QTE resolution if not botched.
+            if tier != "BOTCH":
+                if "set_user_state" in move:
+                    attacker.set_state(WrestlerState(move["set_user_state"]))
+                if "set_target_state" in move:
+                    defender.set_state(WrestlerState(move["set_target_state"]))
+
+            if defender.hp == 0:
+                self._log(f"{defender.name} is exhausted (0 HP) — they're very vulnerable to Pin/Submission.")
+
             self._update_hud()
             return
 
