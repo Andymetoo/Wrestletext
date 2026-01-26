@@ -142,6 +142,7 @@ def submission_minigame(
     title: str,
     prompt: str,
     victim_hp_pct: float,
+    timeout_ms: int = 12000,
     host: tk.Misc | None = None,
 ) -> bool:
     """Higher/Lower sequence guessing game (classic over/under).
@@ -188,6 +189,15 @@ def submission_minigame(
     result = {"done": False, "success": False}
     done_var = tk.BooleanVar(value=False)
 
+    def timeout() -> None:
+        if result["done"]:
+            return
+        result["done"] = True
+        result["success"] = False
+        if host is None:
+            top.destroy()
+        done_var.set(True)
+
     def next_val() -> int:
         nonlocal banned
         v = random.randint(1, 10)
@@ -225,6 +235,9 @@ def submission_minigame(
                 top.destroy()
             done_var.set(True)
 
+    # Auto-resolve to avoid indefinite waits on mobile.
+    parent.after(timeout_ms, timeout)
+
     btns = tk.Frame(container)
     btns.pack(padx=12, pady=(0, 12), fill="x")
 
@@ -248,6 +261,7 @@ def lockup_minigame(
     *,
     title: str,
     prompt: str,
+    timeout_ms: int = 12000,
     host: tk.Misc | None = None,
 ) -> bool:
     """Push-your-luck lock-up (PUSH/HOLD).
@@ -300,6 +314,11 @@ def lockup_minigame(
             top.after(450, top.destroy)
         done_var.set(True)
 
+    def timeout() -> None:
+        if result["done"]:
+            return
+        finish(False, "Time's up—position lost!")
+
     def push() -> None:
         if result["done"]:
             return
@@ -331,6 +350,7 @@ def lockup_minigame(
     ttk.Button(btns, text="HOLD", command=hold).pack(fill="x", pady=4)
 
     refresh()
+    parent.after(timeout_ms, timeout)
     if host is None:
         _position_modal_bottom(parent, top, bottom_padding=28)
         top.wait_window()
@@ -501,6 +521,12 @@ def chain_wrestling_game(
     result = {"done": False, "player": "", "cpu": "", "result": "TIE"}
     done_var = tk.BooleanVar(value=False)
 
+    def timeout() -> None:
+        if result["done"]:
+            return
+        # Auto-pick for player to keep match moving.
+        pick(random.choice(choices))
+
     status = tk.Label(container, text="", font=("Arial", 10, "bold"))
     status.pack(padx=12, pady=(0, 10))
 
@@ -534,6 +560,8 @@ def chain_wrestling_game(
     btns.pack(padx=12, pady=(0, 12), fill="x")
     for c in choices:
         ttk.Button(btns, text=c, command=lambda cc=c: pick(cc)).pack(fill="x", pady=4)
+
+    parent.after(12000, timeout)
 
     if host is None:
         _position_modal_bottom(parent, top, bottom_padding=28)

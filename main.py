@@ -677,6 +677,12 @@ class TacticalWrestlingApp:
             choice_var: tk.StringVar = tk.StringVar(value="BRACE")
             done_var: tk.BooleanVar = tk.BooleanVar(value=False)
 
+            def timeout() -> None:
+                if bool(done_var.get()):
+                    return
+                choice_var.set("BRACE")
+                done_var.set(True)
+
             def pick(choice: str) -> None:
                 choice_var.set(choice)
                 done_var.set(True)
@@ -692,6 +698,9 @@ class TacticalWrestlingApp:
             b3.pack(fill="x", pady=4)
             if self.player.grit < 4:
                 b3.state(["disabled"])
+
+            # Auto-resolve to BRACE if the device doesn't register the tap.
+            self.root.after(12000, timeout)
 
             self.root.wait_variable(done_var)
             choice = choice_var.get()
