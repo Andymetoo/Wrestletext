@@ -86,6 +86,8 @@ class TacticalWrestlingApp:
         # Log
         log_frame = tk.Frame(self.root, bg="#000", bd=2, relief="sunken")
         log_frame.pack(fill="both", expand=True, padx=8, pady=8)
+        log_scroll = tk.Scrollbar(log_frame)
+        log_scroll.pack(side="right", fill="y")
         self.log_text = tk.Text(
             log_frame,
             bg="#000",
@@ -94,8 +96,18 @@ class TacticalWrestlingApp:
             height=12,
             state="disabled",
             wrap="word",
+            yscrollcommand=log_scroll.set,
         )
-        self.log_text.pack(fill="both", expand=True)
+        self.log_text.pack(side="left", fill="both", expand=True)
+        log_scroll.config(command=self.log_text.yview)
+
+        # Log coloring
+        self.log_text.tag_configure("you", foreground="#67ff8a", font=("Consolas", 11, "bold"))
+        self.log_text.tag_configure("cpu", foreground="#5aa7ff", font=("Consolas", 11, "bold"))
+        self.log_text.tag_configure("move", foreground="#ffd166", font=("Consolas", 11, "bold"))
+        self.log_text.tag_configure("dmg", foreground="#ff6b6b")
+        self.log_text.tag_configure("grit", foreground="#c77dff")
+        self.log_text.tag_configure("sys", foreground="#cccccc")
 
         # Moves / context menu
         self.moves_frame = tk.Frame(self.root, bg="#101010")
@@ -108,18 +120,68 @@ class TacticalWrestlingApp:
             bg="#101010",
         )
         self.moves_title.pack(anchor="w", pady=(0, 6))
-        self.moves_grid = tk.Frame(self.moves_frame, bg="#101010")
-        self.moves_grid.pack(fill="x")
+        # Scrollable move area so options never get cut off.
+        self.moves_canvas = tk.Canvas(self.moves_frame, bg="#101010", highlightthickness=0, height=240)
+        self.moves_scroll = tk.Scrollbar(self.moves_frame, orient="vertical", command=self.moves_canvas.yview)
+        self.moves_canvas.configure(yscrollcommand=self.moves_scroll.set)
+        self.moves_scroll.pack(side="right", fill="y")
+        self.moves_canvas.pack(side="left", fill="both", expand=True)
+
+        self.moves_grid = tk.Frame(self.moves_canvas, bg="#101010")
         self.moves_grid.columnconfigure(0, weight=1)
         self.moves_grid.columnconfigure(1, weight=1)
+        self._moves_window_id = self.moves_canvas.create_window((0, 0), window=self.moves_grid, anchor="nw")
+
+        def on_grid_configure(_e: tk.Event) -> None:
+            self.moves_canvas.configure(scrollregion=self.moves_canvas.bbox("all"))
+
+        def on_canvas_configure(e: tk.Event) -> None:
+            self.moves_canvas.itemconfigure(self._moves_window_id, width=e.width)
+
+        self.moves_grid.bind("<Configure>", on_grid_configure)
+        self.moves_canvas.bind("<Configure>", on_canvas_configure)
+
+        def on_mousewheel(e: tk.Event) -> None:
+            self.moves_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+        self.moves_canvas.bind_all("<MouseWheel>", on_mousewheel)
 
     def _log(self, msg: str) -> None:
         if self.game_over:
             return
         self.log_text.config(state="normal")
-        self.log_text.insert("end", f"> {msg}\n")
+        self.log_text.insert("end", f"> {msg}\n", ("sys",))
         self.log_text.see("end")
+        self.log_text.yview_moveto(1.0)
         self.log_text.config(state="disabled")
+
+    def _log_parts(self, parts: list[tuple[str, str]]) -> None:
+        if self.game_over:
+            return
+        self.log_text.config(state="normal")
+        self.log_text.insert("end", "> ", ("sys",))
+        for text, tag in parts:
+            self.log_text.insert("end", text, (tag,))
+        self.log_text.insert("end", "\n", ("sys",))
+        self.log_text.see("end")
+        self.log_text.yview_moveto(1.0)
+        self.log_text.config(state="disabled")
+
+    def _position_modal_bottom(self, top: tk.Toplevel, *, bottom_padding: int = 20) -> None:
+        try:
+            self.root.update_idletasks()
+            top.update_idletasks()
+            pw = self.root.winfo_width()
+            ph = self.root.winfo_height()
+            px = self.root.winfo_rootx()
+            py = self.root.winfo_rooty()
+            tw = top.winfo_width()
+            th = top.winfo_height()
+            x = px + max(0, (pw - tw) // 2)
+            y = py + max(0, ph - th - bottom_padding)
+            top.geometry(f"+{x}+{y}")
+        except tk.TclError:
+            return
 
     def _update_hud(self) -> None:
         self.state_line.config(
@@ -187,6 +249,7 @@ class TacticalWrestlingApp:
             btn.pack(fill="x", padx=12, pady=4)
 
         ttk.Button(top, text="Cancel", command=top.destroy).pack(fill="x", padx=12, pady=(10, 12))
+        self._position_modal_bottom(top, bottom_padding=28)
         top.wait_window()
         return chosen["value"]
 
@@ -208,7 +271,7 @@ class TacticalWrestlingApp:
         if len(moves_to_show) == 0:
             moves_to_show = ["Rest"]
 
-        max_buttons = 8
+        max_buttons = 16
         moves_to_show = moves_to_show[:max_buttons]
 
         for idx, name in enumerate(moves_to_show):
@@ -223,7 +286,7 @@ class TacticalWrestlingApp:
             btn = tk.Button(
                 self.moves_grid,
                 text=label,
-                height=3,
+                height=2,
                 font=("Arial", 10, "bold"),
                 bg="#2f2f2f",
                 fg="#f2f2f2",
@@ -248,7 +311,8 @@ class TacticalWrestlingApp:
 
         gained = active.regen_grit()
         if gained > 0:
-            self._log(f"{active.name} regains {gained} Grit.")
+            tag = "you" if active.is_player else "cpu"
+            self._log_parts([(active.name, tag), (" regains ", "sys"), (f"{gained} Grit", "grit"), (".", "sys")])
 
         self._update_hud()
 
@@ -330,7 +394,10 @@ class TacticalWrestlingApp:
 
     # --- Reaction interrupts ---
     def _reaction_menu(self, incoming_damage: int) -> dict:
-        """Returns {damage:int, negated:bool, reversed:bool, reversal_damage:int}."""
+        """Returns {choice:str}. Choice in {'BRACE','DODGE','REVERSAL'}.
+
+        Grit is spent inside this dialog for DODGE/REVERSAL.
+        """
         top = tk.Toplevel(self.root)
         top.title("React!")
         top.transient(self.root)
@@ -345,13 +412,13 @@ class TacticalWrestlingApp:
         grit_lbl = tk.Label(top, text=f"Your Grit: {self.player.grit}", font=("Arial", 9), fg="#555")
         grit_lbl.pack(padx=12, pady=(0, 10))
 
-        result = {"chosen": False, "damage": incoming_damage, "negated": False, "reversed": False, "reversal_damage": 0}
+        result = {"chosen": False, "choice": "BRACE"}
 
         def choose_brace() -> None:
             if result["chosen"]:
                 return
             result["chosen"] = True
-            result["damage"] = int((incoming_damage + 1) // 2)
+            result["choice"] = "BRACE"
             top.destroy()
 
         def choose_dodge() -> None:
@@ -360,9 +427,7 @@ class TacticalWrestlingApp:
             if not self.player.spend_grit(2):
                 return
             result["chosen"] = True
-            if random.random() < 0.5:
-                result["damage"] = 0
-                result["negated"] = True
+            result["choice"] = "DODGE"
             top.destroy()
 
         def choose_reversal() -> None:
@@ -371,11 +436,7 @@ class TacticalWrestlingApp:
             if not self.player.spend_grit(4):
                 return
             result["chosen"] = True
-            if random.random() < 0.3:
-                result["damage"] = 0
-                result["negated"] = True
-                result["reversed"] = True
-                result["reversal_damage"] = max(1, int(incoming_damage * 0.8))
+            result["choice"] = "REVERSAL"
             top.destroy()
 
         btns = tk.Frame(top)
@@ -395,8 +456,38 @@ class TacticalWrestlingApp:
             b3.state(["disabled"])
 
         top.protocol("WM_DELETE_WINDOW", choose_brace)
+        self._position_modal_bottom(top, bottom_padding=28)
         top.wait_window()
         return result
+
+    def _reaction_skill_check(self) -> float:
+        """Return a performance score 0..1 based on a random minigame."""
+        choice = random.choice(["qte", "lockup", "overunder"])
+        if choice == "qte":
+            out = grapple_qte_minigame(
+                self.root,
+                title="React Timing",
+                prompt="React! Nail the timing to improve your odds.",
+                duration_ms=2600,
+            )
+            tier = out["tier"]
+            if tier == "CRIT":
+                return 1.0
+            if tier == "HIT":
+                return 0.75
+            if tier == "WEAK":
+                return 0.4
+            return 0.0
+        if choice == "lockup":
+            ok = lockup_minigame(self.root, title="React Struggle", prompt="React! PUSH/HOLD to improve your odds.")
+            return 1.0 if ok else 0.0
+        ok = submission_minigame(
+            self.root,
+            title="React Read",
+            prompt="React! Call HIGHER/LOWER correctly to improve your odds.",
+            victim_hp_pct=self.player.hp_pct(),
+        )
+        return 1.0 if ok else 0.0
 
     # --- Core move execution ---
     def _execute_move(self, *, attacker: Wrestler, defender: Wrestler, move_name: str) -> None:
@@ -413,14 +504,42 @@ class TacticalWrestlingApp:
             self._log(f"{attacker.name} doesn't have enough Grit for {move_name}.")
             return
 
-        self._log(f"{attacker.name} uses {move_name}! {move['flavor_text']}")
+        attacker_tag = "you" if attacker.is_player else "cpu"
+        self._log_parts(
+            [
+                (attacker.name, attacker_tag),
+                (" uses ", "sys"),
+                (move_name, "move"),
+                ("! ", "sys"),
+                (move["flavor_text"], "sys"),
+            ]
+        )
 
         # Rest is special: high regen.
         if move_name == "Rest":
             bonus = 5
             before = attacker.grit
             attacker.grit = min(attacker.max_grit, attacker.grit + bonus)
-            self._log(f"{attacker.name} recovers (+{attacker.grit - before} Grit).")
+            self._log_parts(
+                [
+                    (attacker.name, attacker_tag),
+                    (" recovers (", "sys"),
+                    (f"+{attacker.grit - before} Grit", "grit"),
+                    (").", "sys"),
+                ]
+            )
+            self._update_hud()
+            return
+
+        if move_name == "Slow Stand Up":
+            # 0-cost, low-reliability get-up.
+            base = 0.55 if attacker.hp_pct() > 0.25 else 0.4
+            if random.random() < base:
+                attacker.set_state(WrestlerState.STANDING)
+                self._log_parts([(attacker.name, attacker_tag), (" makes it back to their feet.", "sys")])
+            else:
+                attacker.set_state(WrestlerState.GROUNDED)
+                self._log_parts([(attacker.name, attacker_tag), (" can't quite stand yet...", "sys")])
             self._update_hud()
             return
 
@@ -551,23 +670,46 @@ class TacticalWrestlingApp:
         if (not attacker.is_player) and raw_damage > 0:
             reaction = self._reaction_menu(raw_damage)
             self._update_hud()
-            dmg = int(reaction["damage"])
-            negated = bool(reaction["negated"])
-            if dmg == 0:
-                if reaction.get("reversed"):
-                    self._log("REVERSAL! You turn it around!")
-                    self.cpu.take_damage(int(reaction["reversal_damage"]))
-                    self._log(f"CPU takes {int(reaction['reversal_damage'])} damage back.")
-                else:
-                    self._log("You avoid the hit!")
-            else:
+            choice = reaction.get("choice", "BRACE")
+
+            if choice == "BRACE":
+                dmg = int((raw_damage + 1) // 2)
                 self.player.take_damage(dmg)
-                self._log(f"You take {dmg} damage.")
+                self._log_parts([(self.player.name, "you"), (" braces and takes ", "sys"), (f"{dmg}", "dmg"), (" damage.", "sys")])
+            elif choice == "DODGE":
+                score = self._reaction_skill_check()
+                chance = 0.8 if score >= 0.6 else 0.2
+                if random.random() < chance:
+                    negated = True
+                    self._log("You dodge it!")
+                else:
+                    self.player.take_damage(raw_damage)
+                    self._log_parts([(self.player.name, "you"), (" takes ", "sys"), (f"{raw_damage}", "dmg"), (" damage.", "sys")])
+            else:  # REVERSAL
+                score = self._reaction_skill_check()
+                chance = 0.6 if score >= 0.6 else 0.1
+                if random.random() < chance:
+                    negated = True
+                    self._log("REVERSAL! You turn it around!")
+                    back = max(1, int(raw_damage * 0.8))
+                    self.cpu.take_damage(back)
+                    self._log_parts([(self.cpu.name, "cpu"), (" takes ", "sys"), (f"{back}", "dmg"), (" damage back.", "sys")])
+                else:
+                    self.player.take_damage(raw_damage)
+                    self._log_parts([(self.player.name, "you"), (" takes ", "sys"), (f"{raw_damage}", "dmg"), (" damage.", "sys")])
         else:
             # Normal damage application (player attacking CPU, or non-damaging CPU move)
             if raw_damage > 0:
+                if move_name == "Desperation Slap" and attacker.is_player and (not defender.is_player):
+                    if random.random() < 0.75:
+                        self._log_parts([(defender.name, "cpu"), (" easily avoids the lazy shot.", "sys")])
+                        raw_damage = 0
+                        negated = True
+
                 defender.take_damage(raw_damage)
-                self._log(f"{defender.name} takes {raw_damage} damage.")
+                dtag = "you" if defender.is_player else "cpu"
+                if raw_damage > 0:
+                    self._log_parts([(defender.name, dtag), (" takes ", "sys"), (f"{raw_damage}", "dmg"), (" damage.", "sys")])
 
         # State transitions only happen if the hit wasn't fully negated (dodge/reversal).
         if not negated:

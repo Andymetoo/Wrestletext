@@ -34,6 +34,17 @@ MOVES: Dict[str, Move] = {
         "notes": "High regen handled by engine.",
     },
 
+    "Slow Stand Up": {
+        "damage": 0,
+        "cost": 0,
+        "type": "Setup",
+        "req_user_state": "GROUNDED",
+        "req_target_state": "ANY",
+        "flavor_text": "They crawl toward the ropes and try to rise...",
+        "set_user_state": "STANDING",
+        "notes": "Engine applies a success chance; on failure you remain grounded.",
+    },
+
     # --- Standing basics ---
     "Lock Up": {
         "damage": 0,
@@ -52,6 +63,15 @@ MOVES: Dict[str, Move] = {
         "req_target_state": "STANDING",
         "flavor_text": "A quick jab snaps their head back!",
     },
+    "Desperation Slap": {
+        "damage": 1,
+        "cost": 0,
+        "type": "Strike",
+        "req_user_state": "STANDING",
+        "req_target_state": "STANDING",
+        "flavor_text": "A tired slap—more annoyance than impact.",
+        "notes": "Intended as a 0-grit option; engine gives it a high evade chance.",
+    },
     "Front Kick": {
         "damage": 7,
         "cost": 3,
@@ -66,7 +86,7 @@ MOVES: Dict[str, Move] = {
         "type": "Grapple",
         "req_user_state": "STANDING",
         "req_target_state": "STANDING",
-        "flavor_text": "You hook the waist and snap them down!",
+        "flavor_text": "Hooks the waist and snaps them down!",
         "set_target_state": "GROUNDED",
     },
     "DDT": {
@@ -84,7 +104,7 @@ MOVES: Dict[str, Move] = {
         "type": "Grapple",
         "req_user_state": "STANDING",
         "req_target_state": "STANDING",
-        "flavor_text": "You hoist them up—POWERBOMB! The ring shakes!",
+        "flavor_text": "Hoists them up—POWERBOMB! The ring shakes!",
         "set_target_state": "GROUNDED",
     },
 
@@ -116,6 +136,16 @@ MOVES: Dict[str, Move] = {
         "flavor_text": "You scale the turnbuckles and steady your footing...",
         "set_user_state": "TOP_ROPE",
     },
+    "Climb Down": {
+        "damage": 0,
+        "cost": 0,
+        "type": "Setup",
+        "req_user_state": "TOP_ROPE",
+        "req_target_state": "ANY",
+        "flavor_text": "They climb back down to the mat.",
+        "set_user_state": "STANDING",
+        "notes": "Prevents TOP_ROPE soft-locks.",
+    },
     "Shove Off Turnbuckle": {
         "damage": 8,
         "cost": 4,
@@ -124,6 +154,17 @@ MOVES: Dict[str, Move] = {
         "req_target_state": "TOP_ROPE",
         "flavor_text": "A nasty shove sends them crashing down!",
         "set_target_state": "GROUNDED",
+    },
+    "Superplex": {
+        "damage": 22,
+        "cost": 10,
+        "type": "Grapple",
+        "req_user_state": "TOP_ROPE",
+        "req_target_state": "TOP_ROPE",
+        "flavor_text": "Hooks them up top—SUPERPLEX! Both bodies hit hard!",
+        "set_user_state": "GROUNDED",
+        "set_target_state": "GROUNDED",
+        "notes": "High risk/high reward; can break 'both top rope' stalls.",
     },
     "Kip-up": {
         "damage": 0,

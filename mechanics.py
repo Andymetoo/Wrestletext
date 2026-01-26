@@ -9,6 +9,25 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
+def _position_modal_bottom(parent: tk.Misc, top: tk.Toplevel, *, bottom_padding: int = 20) -> None:
+    """Position a modal near the bottom-center of the parent window."""
+    try:
+        parent.update_idletasks()
+        top.update_idletasks()
+        pw = parent.winfo_width()
+        ph = parent.winfo_height()
+        px = parent.winfo_rootx()
+        py = parent.winfo_rooty()
+        tw = top.winfo_width()
+        th = top.winfo_height()
+        x = px + max(0, (pw - tw) // 2)
+        y = py + max(0, ph - th - bottom_padding)
+        top.geometry(f"+{x}+{y}")
+    except tk.TclError:
+        # Safe fallback: let the window manager decide.
+        return
+
+
 def pin_minigame(
     parent: tk.Misc,
     *,
@@ -92,6 +111,8 @@ def pin_minigame(
     btn = ttk.Button(top, text="STOP!", command=stop)
     btn.pack(padx=12, pady=(0, 12), fill="x")
     top.bind("<space>", lambda _e: stop())
+
+    _position_modal_bottom(parent, top, bottom_padding=28)
 
     tick(0)
     top.wait_window()
@@ -183,6 +204,8 @@ def submission_minigame(
     b2 = ttk.Button(btns, text="HIGHER", command=lambda: choose("HIGHER"))
     b2.pack(fill="x", pady=4)
 
+    _position_modal_bottom(parent, top, bottom_padding=28)
+
     top.wait_window()
     return bool(result["success"])
 
@@ -263,6 +286,8 @@ def lockup_minigame(
     btns.pack(padx=12, pady=(0, 12), fill="x")
     ttk.Button(btns, text="PUSH", command=push).pack(fill="x", pady=4)
     ttk.Button(btns, text="HOLD", command=hold).pack(fill="x", pady=4)
+
+    _position_modal_bottom(parent, top, bottom_padding=28)
 
     refresh()
     top.wait_window()
@@ -352,6 +377,8 @@ def grapple_qte_minigame(
     btn = ttk.Button(top, text="EXECUTE!", command=stop)
     btn.pack(padx=12, pady=(0, 12), fill="x")
     top.bind("<space>", lambda _e: stop())
+
+    _position_modal_bottom(parent, top, bottom_padding=28)
 
     tick(0)
     top.wait_window()
