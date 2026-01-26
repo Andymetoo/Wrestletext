@@ -32,7 +32,7 @@ def _apply_embedded_theme(container: tk.Misc) -> dict[str, str]:
     return {"bg": bg, "fg": fg, "subfg": subfg}
 
 
-def _embedded_content_width(container: tk.Misc, *, default: int = 320, max_width: int = 360) -> int:
+def _embedded_content_width(container: tk.Misc, *, default: int = 320) -> int:
     """Return a conservative content width for embedded UIs.
 
     Some mobile wrappers only show the left part of a large Tk window.
@@ -45,8 +45,10 @@ def _embedded_content_width(container: tk.Misc, *, default: int = 320, max_width
         return default
     if w <= 1:
         return default
-    # Subtract a bit for padding/scrollbars; clamp to keep it phone-friendly.
-    return max(240, min(max_width, w - 24))
+    # Subtract a bit for padding/scrollbars.
+    # Do not hard-clamp to a phone-ish width here; the host container (Moves panel)
+    # is already sized by the app/window, and clamping makes embedded UIs feel squished.
+    return max(240, w - 24)
 
 
 def _position_modal_bottom(parent: tk.Misc, top: tk.Toplevel, *, bottom_padding: int = 20) -> None:

@@ -176,11 +176,11 @@ class TacticalWrestlingApp:
         self.modal_body.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         # Inner content area for embedded modals.
-        # Keep it left-anchored with a capped width so phones that only show the
-        # left part of a wider Tk window still see the whole minigame.
+        # Keep it left-anchored and let it fill the Moves panel width.
+        # (We handle off-screen/cropping issues inside mechanics by anchoring
+        # widgets left and respecting the host width.)
         self.modal_content = tk.Frame(self.modal_body, bg="#0b0b0b")
-        self.modal_content.pack(fill="y", expand=True, anchor="nw")
-        self.modal_content.pack_propagate(False)
+        self.modal_content.pack(fill="both", expand=True, anchor="nw")
 
         self.moves_grid = tk.Frame(self.moves_canvas, bg="#101010")
         self.moves_grid.columnconfigure(0, weight=1)
@@ -302,33 +302,48 @@ class TacticalWrestlingApp:
 
     def _show_modal(self, title: str) -> None:
         self.modal_title.config(text=title)
+        # Some flows previously packed widgets directly into modal_body.
+        # Clear everything except the fixed modal_content container.
+        for w in list(self.modal_body.winfo_children()):
+            if w is self.modal_content:
+                continue
+            w.destroy()
         for w in list(self.modal_content.winfo_children()):
             w.destroy()
-        if self.moves_title.winfo_ismapped():
+        # Hide the normal moves list UI.
+        try:
             self.moves_title.pack_forget()
-        if self.moves_canvas.winfo_ismapped():
-            self.moves_canvas.pack_forget()
-        if self.moves_scroll.winfo_ismapped():
-            self.moves_scroll.pack_forget()
-        self.modal_frame.pack(fill="both", expand=True)
-
-        # Clamp modal content width to a phone-ish size and anchor left.
-        try:
-            self.root.update_idletasks()
-            w = int(self.moves_frame.winfo_width())
-            if w <= 1:
-                w = int(self.root.winfo_width())
         except tk.TclError:
-            w = 360
-        content_w = max(240, min(380, w - 28))
+            pass
         try:
-            self.modal_content.configure(width=content_w)
+            self.moves_canvas.pack_forget()
+        except tk.TclError:
+            pass
+        try:
+            self.moves_scroll.pack_forget()
         except tk.TclError:
             pass
 
+        # Overlay the modal to guarantee full-width alignment.
+        # (Pack-based stacking can leave the modal squeezed or shifted if a
+        # scrollbar/widget remains packed unexpectedly.)
+        try:
+            self.modal_frame.place(in_=self.moves_frame, x=0, y=0, relwidth=1.0, relheight=1.0)
+            self.modal_frame.lift()
+        except tk.TclError:
+            # Fallback
+            self.modal_frame.pack(fill="both", expand=True)
+
     def _hide_modal(self) -> None:
+        try:
+            self.modal_frame.place_forget()
+        except tk.TclError:
+            pass
         if self.modal_frame.winfo_ismapped():
-            self.modal_frame.pack_forget()
+            try:
+                self.modal_frame.pack_forget()
+            except tk.TclError:
+                pass
         if not self.moves_title.winfo_ismapped():
             self.moves_title.pack(anchor="w", pady=(0, 6))
         if not self.moves_scroll.winfo_ismapped():
@@ -472,7 +487,13 @@ class TacticalWrestlingApp:
             chosen_var: tk.StringVar = tk.StringVar(value="")
             done_var: tk.BooleanVar = tk.BooleanVar(value=False)
 
-            tk.Label(self.modal_body, text="Pick a grapple follow-up:", fg="#f2f2f2", bg="#0b0b0b", font=("Arial", 10, "bold")).pack(
+            tk.Label(
+                self.modal_content,
+                text="Pick a grapple follow-up:",
+                fg="#f2f2f2",
+                bg="#0b0b0b",
+                font=("Arial", 10, "bold"),
+            ).pack(
                 anchor="w", pady=(0, 8)
             )
 
@@ -481,12 +502,12 @@ class TacticalWrestlingApp:
                 cost = int(mv["cost"])
                 dmg = int(mv["damage"])
                 ttk.Button(
-                    self.modal_body,
+                    self.modal_content,
                     text=f"{name} (Cost {cost}, Dmg {dmg})",
                     command=lambda n=name: (chosen_var.set(n), done_var.set(True)),
                 ).pack(fill="x", pady=4)
 
-            ttk.Button(self.modal_body, text="Cancel", command=lambda: done_var.set(True)).pack(fill="x", pady=(10, 0))
+            ttk.Button(self.modal_content, text="Cancel", command=lambda: done_var.set(True)).pack(fill="x", pady=(10, 0))
             self.root.wait_variable(done_var)
             val = chosen_var.get().strip() or None
             return val
