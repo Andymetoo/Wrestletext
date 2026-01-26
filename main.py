@@ -28,6 +28,7 @@ class TacticalWrestlingApp:
         self._player_bonus_available = False
         self._in_grapple_followup_picker = False
         self._last_turn_banner: str | None = None
+        self._after_ids: list[str] = []
 
         self._build_ui()
         self._log("Match start. Win only by Pinfall or Submission.")
@@ -132,7 +133,8 @@ class TacticalWrestlingApp:
 
         # Allow finger/drag scrolling on the log.
         self.log_text.bind("<ButtonPress-1>", lambda e: self.log_text.scan_mark(e.x, e.y))
-        self.log_text.bind("<B1-Motion>", lambda e: self.log_text.scan_dragto(e.x, e.y, gain=1))
+        # Some Tk builds (e.g., Pydroid3) don't accept 'gain' as a keyword.
+        self.log_text.bind("<B1-Motion>", lambda e: self.log_text.scan_dragto(e.x, e.y, 1))
 
         # Log coloring
         self.log_text.tag_configure("you", foreground="#67ff8a", font=("Consolas", 11, "bold"))
@@ -194,7 +196,102 @@ class TacticalWrestlingApp:
 
         # Allow finger/drag scrolling in the moves list.
         self.moves_canvas.bind("<ButtonPress-1>", lambda e: self.moves_canvas.scan_mark(e.x, e.y))
-        self.moves_canvas.bind("<B1-Motion>", lambda e: self.moves_canvas.scan_dragto(e.x, e.y, gain=1))
+        self.moves_canvas.bind("<B1-Motion>", lambda e: self.moves_canvas.scan_dragto(e.x, e.y, 1))
+
+        # Small system button (bottom-left) for restart without quitting.
+        self.sys_btn = tk.Button(
+            self.root,
+            text="S",
+            width=2,
+            height=1,
+            font=("Arial", 9, "bold"),
+            bg="#222",
+            fg="#f2f2f2",
+            activebackground="#333",
+            activeforeground="#fff",
+            bd=1,
+            relief="raised",
+            command=self._open_system_menu,
+        )
+        self.sys_btn.place(x=6, y=-6, anchor="sw", relx=0.0, rely=1.0)
+
+    def _schedule(self, ms: int, func) -> None:
+        """Schedule a callback and keep track so restart can cancel it."""
+        try:
+            after_id = self.root.after(ms, func)
+            self._after_ids.append(after_id)
+        except tk.TclError:
+            return
+
+    def _cancel_scheduled(self) -> None:
+        for after_id in list(self._after_ids):
+            try:
+                self.root.after_cancel(after_id)
+            except tk.TclError:
+                pass
+        self._after_ids.clear()
+
+    def _clear_log(self) -> None:
+        self.log_text.config(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.config(state="disabled")
+
+    def _restart_match(self) -> None:
+        """Reset the match state without exiting (useful on mobile wrappers)."""
+        self._cancel_scheduled()
+        self._hide_modal()
+
+        self.player = Wrestler("YOU", True)
+        self.cpu = Wrestler("CPU", False)
+        self.turn = "player"
+        self.game_over = False
+        self._player_bonus_available = False
+        self._in_grapple_followup_picker = False
+        self._last_turn_banner = None
+
+        # Ensure HUD bars match new wrestler caps.
+        self.p_grit.configure(maximum=self.player.max_grit)
+        self.c_grit.configure(maximum=self.cpu.max_grit)
+
+        self._clear_log()
+        self._log("Match restarted. Win only by Pinfall or Submission.")
+        self._update_hud()
+        self._start_turn("player")
+
+    def _open_system_menu(self) -> None:
+        if getattr(self, "_sys_menu_open", False):
+            return
+        self._sys_menu_open = True
+
+        top = tk.Toplevel(self.root)
+        top.title("System")
+        top.transient(self.root)
+        top.grab_set()
+        top.resizable(False, False)
+
+        wrap = tk.Frame(top, bg="#111")
+        wrap.pack(fill="both", expand=True)
+
+        tk.Label(wrap, text="System", font=("Arial", 12, "bold"), fg="#f2f2f2", bg="#111").pack(
+            padx=14, pady=(14, 8)
+        )
+
+        ttk.Button(wrap, text="Restart Match", command=lambda: (top.destroy(), self._restart_match())).pack(
+            fill="x", padx=14, pady=6
+        )
+        ttk.Button(wrap, text="Close", command=top.destroy).pack(fill="x", padx=14, pady=(0, 14))
+
+        def on_close() -> None:
+            try:
+                top.destroy()
+            finally:
+                self._sys_menu_open = False
+
+        top.protocol("WM_DELETE_WINDOW", on_close)
+        top.bind("<Escape>", lambda _e: on_close())
+        self._position_modal_bottom(top, bottom_padding=28)
+        top.wait_window()
+        self._sys_menu_open = False
 
     def _show_modal(self, title: str) -> None:
         self.modal_title.config(text=title)
@@ -442,9 +539,9 @@ class TacticalWrestlingApp:
             active.on_turn_end()
             nxt = "cpu" if who == "player" else "player"
             if nxt == "cpu":
-                self.root.after(700, lambda: self._start_turn("cpu"))
+                self._schedule(700, lambda: self._start_turn("cpu"))
             else:
-                self.root.after(350, lambda: self._start_turn("player"))
+                self._schedule(350, lambda: self._start_turn("player"))
             return
 
         if who == "player":
@@ -462,7 +559,7 @@ class TacticalWrestlingApp:
         else:
             for child in list(self.moves_grid.winfo_children()):
                 child.destroy()
-            self.root.after(700, self._cpu_take_turn)
+            self._schedule(700, self._cpu_take_turn)
 
     def _end_match(self, winner: str, reason: str) -> None:
         if self.game_over:
@@ -549,7 +646,7 @@ class TacticalWrestlingApp:
             return
         if keep_turn:
             self._update_hud()
-            self.root.after(450, self._cpu_take_turn)
+            self._schedule(450, self._cpu_take_turn)
             return
         self.cpu.on_turn_end()
         self._start_turn("player")
