@@ -458,3 +458,87 @@ def grapple_qte_minigame(
         mult = 0.5
 
     return {"tier": tier, "timing": timing, "multiplier": mult}
+
+
+def chain_wrestling_game(
+    parent: tk.Misc,
+    *,
+    title: str,
+    prompt: str,
+    host: tk.Misc | None = None,
+) -> dict:
+    """Blind RPS between POWER, SPEED, TECHNICAL.
+
+    Rules:
+    - POWER beats SPEED
+    - SPEED beats TECHNICAL
+    - TECHNICAL beats POWER
+
+    Returns dict: {"result": "WIN"|"TIE"|"LOSS", "player": str, "cpu": str}
+    """
+    choices = ["POWER", "SPEED", "TECHNICAL"]
+    beats = {
+        "POWER": "SPEED",
+        "SPEED": "TECHNICAL",
+        "TECHNICAL": "POWER",
+    }
+
+    if host is None:
+        top = tk.Toplevel(parent)
+        top.title(title)
+        top.transient(parent)
+        top.grab_set()
+        top.resizable(False, False)
+        container: tk.Misc = top
+    else:
+        container = host
+        for w in list(container.winfo_children()):
+            w.destroy()
+
+    tk.Label(container, text=prompt, font=("Arial", 11, "bold")).pack(padx=12, pady=(12, 6))
+    tk.Label(container, text="Choose blindly. No hints.", font=("Arial", 9), fg="#555").pack(padx=12, pady=(0, 10))
+
+    result = {"done": False, "player": "", "cpu": "", "result": "TIE"}
+    done_var = tk.BooleanVar(value=False)
+
+    status = tk.Label(container, text="", font=("Arial", 10, "bold"))
+    status.pack(padx=12, pady=(0, 10))
+
+    def finish(msg: str) -> None:
+        status.config(text=msg)
+        if host is None:
+            top.after(550, top.destroy)
+        done_var.set(True)
+
+    def pick(player_choice: str) -> None:
+        if result["done"]:
+            return
+        cpu_choice = random.choice(choices)
+        result["player"] = player_choice
+        result["cpu"] = cpu_choice
+        if cpu_choice == player_choice:
+            result["result"] = "TIE"
+            result["done"] = True
+            finish(f"Tie! You both chose {player_choice}.")
+            return
+        if beats[player_choice] == cpu_choice:
+            result["result"] = "WIN"
+            result["done"] = True
+            finish(f"Win! {player_choice} beats {cpu_choice}.")
+            return
+        result["result"] = "LOSS"
+        result["done"] = True
+        finish(f"Loss! {cpu_choice} beats {player_choice}.")
+
+    btns = tk.Frame(container)
+    btns.pack(padx=12, pady=(0, 12), fill="x")
+    for c in choices:
+        ttk.Button(btns, text=c, command=lambda cc=c: pick(cc)).pack(fill="x", pady=4)
+
+    if host is None:
+        _position_modal_bottom(parent, top, bottom_padding=28)
+        top.wait_window()
+    else:
+        parent.wait_variable(done_var)
+
+    return {"result": result["result"], "player": result["player"], "cpu": result["cpu"]}

@@ -4,9 +4,15 @@ import random
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from mechanics import grapple_qte_minigame, lockup_minigame, pin_minigame, submission_minigame
+from mechanics import (
+    chain_wrestling_game,
+    grapple_qte_minigame,
+    lockup_minigame,
+    pin_minigame,
+    submission_minigame,
+)
 from moves_db import MOVES
-from wrestler import MAX_HEALTH, Wrestler, WrestlerState
+from wrestler import GrappleRole, MAX_HEALTH, Wrestler, WrestlerState
 
 
 class TacticalWrestlingApp:
@@ -36,6 +42,12 @@ class TacticalWrestlingApp:
         except tk.TclError:
             pass
         style.configure("TProgressbar", troughcolor="#2a2a2a", background="#3aa655")
+        # ttk resolves style names as 'Horizontal.<style>' for horizontal progressbars.
+        try:
+            style.layout("Horizontal.Hype.TProgressbar", style.layout("Horizontal.TProgressbar"))
+        except tk.TclError:
+            pass
+        style.configure("Horizontal.Hype.TProgressbar", troughcolor="#2a2a2a", background="#ffd166")
 
         self.hud = tk.Frame(self.root, bg="#1b1b1b")
         self.hud.pack(fill="x", padx=8, pady=8)
@@ -60,8 +72,12 @@ class TacticalWrestlingApp:
         self.p_hp.pack(fill="x", padx=(0, 8))
         self.p_grit = ttk.Progressbar(left, maximum=self.player.max_grit)
         self.p_grit.pack(fill="x", padx=(0, 8), pady=(4, 0))
+        self.p_hype = ttk.Progressbar(left, maximum=100, style="Hype.TProgressbar")
+        self.p_hype.pack(fill="x", padx=(0, 8), pady=(4, 0))
         self.p_nums = tk.Label(left, text="", fg="#aaa", bg="#1b1b1b", font=("Arial", 9))
         self.p_nums.pack(anchor="w", pady=(2, 0))
+        self.p_limbs = tk.Label(left, text="", fg="#aaa", bg="#1b1b1b", font=("Arial", 9))
+        self.p_limbs.pack(anchor="w", pady=(0, 0))
 
         # CPU side
         right = tk.Frame(bars, bg="#1b1b1b")
@@ -71,8 +87,12 @@ class TacticalWrestlingApp:
         self.c_hp.pack(fill="x", padx=(8, 0))
         self.c_grit = ttk.Progressbar(right, maximum=self.cpu.max_grit)
         self.c_grit.pack(fill="x", padx=(8, 0), pady=(4, 0))
+        self.c_hype = ttk.Progressbar(right, maximum=100, style="Hype.TProgressbar")
+        self.c_hype.pack(fill="x", padx=(8, 0), pady=(4, 0))
         self.c_nums = tk.Label(right, text="", fg="#aaa", bg="#1b1b1b", font=("Arial", 9))
         self.c_nums.pack(anchor="e", pady=(2, 0))
+        self.c_limbs = tk.Label(right, text="", fg="#aaa", bg="#1b1b1b", font=("Arial", 9))
+        self.c_limbs.pack(anchor="e", pady=(0, 0))
 
         # Turn label
         self.turn_label = tk.Label(
@@ -84,7 +104,7 @@ class TacticalWrestlingApp:
         )
         self.turn_label.pack(fill="x", padx=8)
 
-        # Center area: either Log (default) or an embedded "modal" panel.
+        # Log (always visible)
         self.center_frame = tk.Frame(self.root, bg="#101010")
         self.center_frame.pack(fill="x", padx=8, pady=8)
 
@@ -118,13 +138,6 @@ class TacticalWrestlingApp:
         self.log_text.tag_configure("grit", foreground="#c77dff")
         self.log_text.tag_configure("sys", foreground="#cccccc")
 
-        # Embedded modal panel (replaces log temporarily)
-        self.modal_frame = tk.Frame(self.center_frame, bg="#0b0b0b", bd=2, relief="sunken")
-        self.modal_title = tk.Label(self.modal_frame, text="", font=("Arial", 11, "bold"), fg="#f2f2f2", bg="#0b0b0b")
-        self.modal_title.pack(fill="x", padx=10, pady=(10, 6))
-        self.modal_body = tk.Frame(self.modal_frame, bg="#0b0b0b")
-        self.modal_body.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-
         # Moves / context menu (bigger + scrollable)
         self.moves_frame = tk.Frame(self.root, bg="#101010")
         self.moves_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
@@ -142,6 +155,19 @@ class TacticalWrestlingApp:
         self.moves_canvas.configure(yscrollcommand=self.moves_scroll.set)
         self.moves_scroll.pack(side="right", fill="y")
         self.moves_canvas.pack(side="left", fill="both", expand=True)
+
+        # Embedded modal panel (replaces moves list temporarily)
+        self.modal_frame = tk.Frame(self.moves_frame, bg="#0b0b0b", bd=2, relief="sunken")
+        self.modal_title = tk.Label(
+            self.modal_frame,
+            text="",
+            font=("Arial", 11, "bold"),
+            fg="#f2f2f2",
+            bg="#0b0b0b",
+        )
+        self.modal_title.pack(fill="x", padx=10, pady=(10, 6))
+        self.modal_body = tk.Frame(self.modal_frame, bg="#0b0b0b")
+        self.modal_body.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         self.moves_grid = tk.Frame(self.moves_canvas, bg="#101010")
         self.moves_grid.columnconfigure(0, weight=1)
@@ -170,15 +196,19 @@ class TacticalWrestlingApp:
         self.modal_title.config(text=title)
         for w in list(self.modal_body.winfo_children()):
             w.destroy()
-        if self.log_frame.winfo_ismapped():
-            self.log_frame.pack_forget()
-        self.modal_frame.pack(fill="x", expand=False)
+        if self.moves_canvas.winfo_ismapped():
+            self.moves_canvas.pack_forget()
+        if self.moves_scroll.winfo_ismapped():
+            self.moves_scroll.pack_forget()
+        self.modal_frame.pack(fill="both", expand=True)
 
     def _hide_modal(self) -> None:
         if self.modal_frame.winfo_ismapped():
             self.modal_frame.pack_forget()
-        if not self.log_frame.winfo_ismapped():
-            self.log_frame.pack(fill="x", expand=False)
+        if not self.moves_scroll.winfo_ismapped():
+            self.moves_scroll.pack(side="right", fill="y")
+        if not self.moves_canvas.winfo_ismapped():
+            self.moves_canvas.pack(side="left", fill="both", expand=True)
 
     def _log(self, msg: str) -> None:
         if self.game_over:
@@ -218,18 +248,35 @@ class TacticalWrestlingApp:
             return
 
     def _update_hud(self) -> None:
-        self.state_line.config(
-            text=f"YOU: {self.player.state.value}  |  CPU: {self.cpu.state.value}"
-        )
+        def role(w: Wrestler) -> str:
+            if w.state != WrestlerState.GRAPPLED or w.grapple_role is None:
+                return ""
+            return f" ({w.grapple_role.value})"
+
+        def flow(w: Wrestler) -> str:
+            if not w.is_flow():
+                return ""
+            return f" [FLOW {w.flow_turns_remaining}]"
+
+        self.state_line.config(text=f"YOU: {self.player.state.value}{role(self.player)}{flow(self.player)}  |  CPU: {self.cpu.state.value}{role(self.cpu)}{flow(self.cpu)}")
         self.turn_label.config(text=f"TURN: {'YOU' if self.turn == 'player' else 'CPU'}")
 
         self.p_hp["value"] = self.player.hp
         self.c_hp["value"] = self.cpu.hp
         self.p_grit["value"] = self.player.grit
         self.c_grit["value"] = self.cpu.grit
+        self.p_hype["value"] = self.player.hype
+        self.c_hype["value"] = self.cpu.hype
 
-        self.p_nums.config(text=f"HP {self.player.hp}/{MAX_HEALTH}  |  Grit {self.player.grit}/{self.player.max_grit}")
-        self.c_nums.config(text=f"HP {self.cpu.hp}/{MAX_HEALTH}  |  Grit {self.cpu.grit}/{self.cpu.max_grit}")
+        self.p_nums.config(text=f"HP {self.player.hp}/{MAX_HEALTH}  |  Grit {self.player.grit}/{self.player.max_grit}  |  Hype {self.player.hype}/100")
+        self.c_nums.config(text=f"HP {self.cpu.hp}/{MAX_HEALTH}  |  Grit {self.cpu.grit}/{self.cpu.max_grit}  |  Hype {self.cpu.hype}/100")
+
+        self.p_limbs.config(
+            text=f"H:{self.player.body_parts['HEAD']}  B:{self.player.body_parts['BODY']}  L:{self.player.body_parts['LEGS']}"
+        )
+        self.c_limbs.config(
+            text=f"H:{self.cpu.body_parts['HEAD']}  B:{self.cpu.body_parts['BODY']}  L:{self.cpu.body_parts['LEGS']}"
+        )
 
     # --- Moves filtering ---
     def _move_is_legal(self, move_name: str, user: Wrestler, target: Wrestler) -> bool:
@@ -244,8 +291,38 @@ class TacticalWrestlingApp:
             return False
         return True
 
+    def _is_universal_action(self, move_name: str) -> bool:
+        # Requested universal actions, plus a few safety/escape options to avoid soft-locks.
+        return move_name in {
+            "Rest",
+            "Taunt",
+            "Lock Up",
+            "Slow Stand Up",
+            "Kip-up",
+            "Climb Down",
+            "Stop Short",
+        }
+
+    def _passes_moveset(self, wrestler: Wrestler, move_name: str) -> bool:
+        if self._is_universal_action(move_name):
+            return True
+        if wrestler.moveset is None:
+            return True
+        return move_name in set(wrestler.moveset)
+
     def _available_moves(self, user: Wrestler, target: Wrestler) -> list[str]:
-        names = [n for n in MOVES.keys() if n != "Rest" and self._move_is_legal(n, user, target)]
+        names = [n for n in MOVES.keys() if self._move_is_legal(n, user, target) and self._passes_moveset(user, n)]
+
+        # Neutral restrictions: standing (neutral) only allows strikes, attempt grapple, and taunts.
+        if user.state == WrestlerState.STANDING and target.state == WrestlerState.STANDING:
+            allowed_names = {"Lock Up", "Taunt"}
+            names = [n for n in names if MOVES[n].get("type") == "Strike" or n in allowed_names]
+            if self._move_is_legal("Rest", user, target) and self._passes_moveset(user, "Rest"):
+                names.append("Rest")
+
+        # Grapple restrictions: defender mostly fights for control.
+        if user.state == WrestlerState.GRAPPLED and user.grapple_role == GrappleRole.DEFENSE:
+            names = [n for n in names if n == "Chain Wrestle"]
 
         def key(n: str) -> tuple[int, int, str]:
             t = MOVES[n]["type"]
@@ -299,7 +376,7 @@ class TacticalWrestlingApp:
             return
 
         moves = self._available_moves(self.player, self.cpu)
-        affordable = [m for m in moves if MOVES[m]["cost"] <= self.player.grit]
+        affordable = [m for m in moves if (0 if self.player.is_flow() else MOVES[m]["cost"]) <= self.player.grit]
         if len(affordable) == 0:
             moves_to_show = ["Rest"]
         else:
@@ -314,7 +391,8 @@ class TacticalWrestlingApp:
 
         for idx, name in enumerate(moves_to_show):
             move = MOVES[name]
-            cost = int(move["cost"])
+            base_cost = int(move["cost"])
+            cost = 0 if self.player.is_flow() else base_cost
             dmg = int(move["damage"])
             label = f"{name}\nCost {cost}"
             if dmg > 0:
@@ -343,6 +421,20 @@ class TacticalWrestlingApp:
             return
         self.turn = who
         active = self.player if who == "player" else self.cpu
+
+        # Stun: skip the turn.
+        if active.stun_turns > 0:
+            active.stun_turns = max(0, active.stun_turns - 1)
+            tag = "you" if active.is_player else "cpu"
+            self._log_parts([(active.name, tag), (" is stunned and can't act!", "sys")])
+            self._update_hud()
+            active.on_turn_end()
+            nxt = "cpu" if who == "player" else "player"
+            if nxt == "cpu":
+                self.root.after(700, lambda: self._start_turn("cpu"))
+            else:
+                self.root.after(350, lambda: self._start_turn("player"))
+            return
 
         if who == "player":
             self._player_bonus_available = True
@@ -374,8 +466,13 @@ class TacticalWrestlingApp:
         if self.game_over or self.turn != "player":
             return
         before = self.cpu.state
-        self._execute_move(attacker=self.player, defender=self.cpu, move_name=move_name)
+        keep_turn = self._execute_move(attacker=self.player, defender=self.cpu, move_name=move_name)
         if self.game_over:
+            return
+
+        if keep_turn:
+            self._update_hud()
+            self._refresh_player_buttons()
             return
 
         move = MOVES.get(move_name, {})
@@ -392,20 +489,30 @@ class TacticalWrestlingApp:
             self._update_hud()
             self._refresh_player_buttons()
             return
-
+        self.player.on_turn_end()
         self._start_turn("cpu")
 
     # --- CPU action ---
     def _cpu_choose_move(self) -> str:
         options = self._available_moves(self.cpu, self.player)
-        affordable = [m for m in options if MOVES[m]["cost"] <= self.cpu.grit]
+        affordable = [m for m in options if self._effective_cost(self.cpu, m) <= self.cpu.grit]
         if not affordable:
             return "Rest"
 
         def score(name: str) -> float:
             mv = MOVES[name]
-            base = float(mv["damage"])
+            base = float(mv.get("damage", 0))
             t = mv["type"]
+            base += float(int(mv.get("hype_gain", 0))) * 0.10
+
+            # Neutral grappling pressure.
+            if name == "Lock Up" and self.cpu.state == WrestlerState.STANDING and self.player.state == WrestlerState.STANDING:
+                base += 6.0
+            if name == "Taunt" and self.cpu.hype < 80:
+                base += 3.0
+
+            if name == "Chain Wrestle" and self.cpu.state == WrestlerState.GRAPPLED:
+                base += 5.0
             if t == "Pin" and self.player.state == WrestlerState.GROUNDED:
                 base += 25.0 * (1.0 - self.player.hp_pct())
             if t == "Submission" and self.player.state == WrestlerState.GROUNDED:
@@ -415,7 +522,7 @@ class TacticalWrestlingApp:
             if mv.get("set_target_state") == "RUNNING":
                 base += 3.0
             # Slightly prefer cheaper moves when low on grit.
-            base -= 0.15 * int(mv["cost"])
+            base -= 0.15 * self._effective_cost(self.cpu, name)
             # Add small randomness so it doesn't play identical.
             return base + random.random() * 1.5
 
@@ -426,9 +533,15 @@ class TacticalWrestlingApp:
         if self.game_over or self.turn != "cpu":
             return
         move_name = self._cpu_choose_move()
-        self._execute_move(attacker=self.cpu, defender=self.player, move_name=move_name)
-        if not self.game_over:
-            self._start_turn("player")
+        keep_turn = self._execute_move(attacker=self.cpu, defender=self.player, move_name=move_name)
+        if self.game_over:
+            return
+        if keep_turn:
+            self._update_hud()
+            self.root.after(450, self._cpu_take_turn)
+            return
+        self.cpu.on_turn_end()
+        self._start_turn("player")
 
     # --- Reaction interrupts ---
     def _reaction_menu(self, incoming_damage: int) -> dict:
@@ -533,20 +646,85 @@ class TacticalWrestlingApp:
             self._hide_modal()
         return 1.0 if ok else 0.0
 
+    # --- N64 helpers ---
+    def _effective_cost(self, w: Wrestler, move_name: str) -> int:
+        base = int(MOVES[move_name]["cost"])
+        return 0 if w.is_flow() else base
+
+    def _enter_grapple(self, *, offense: Wrestler, defense: Wrestler) -> None:
+        offense.set_state(WrestlerState.GRAPPLED)
+        defense.set_state(WrestlerState.GRAPPLED)
+        offense.grapple_role = GrappleRole.OFFENSE
+        defense.grapple_role = GrappleRole.DEFENSE
+
+    def _clear_grapple_roles_if_exited(self, a: Wrestler, b: Wrestler) -> None:
+        if a.state != WrestlerState.GRAPPLED or b.state != WrestlerState.GRAPPLED:
+            a.grapple_role = None
+            b.grapple_role = None
+
+    def _cpu_neutral_intent(self) -> str:
+        """Return CPU intent in neutral: STRIKE | GRAPPLE | PASSIVE."""
+        # Bias toward strikes when it can afford them; grapple sometimes; passive rarely.
+        if self.cpu.grit <= 1:
+            weights = [("STRIKE", 0.35), ("GRAPPLE", 0.25), ("PASSIVE", 0.40)]
+        else:
+            weights = [("STRIKE", 0.55), ("GRAPPLE", 0.35), ("PASSIVE", 0.10)]
+        r = random.random()
+        acc = 0.0
+        for name, w in weights:
+            acc += w
+            if r <= acc:
+                return name
+        return "STRIKE"
+
+    def _simulated_player_intent(self) -> str:
+        """When CPU initiates, simulate the player's neutral intent."""
+        if self.player.grit <= 1:
+            weights = [("STRIKE", 0.35), ("GRAPPLE", 0.30), ("PASSIVE", 0.35)]
+        else:
+            weights = [("STRIKE", 0.50), ("GRAPPLE", 0.40), ("PASSIVE", 0.10)]
+        r = random.random()
+        acc = 0.0
+        for name, w in weights:
+            acc += w
+            if r <= acc:
+                return name
+        return "STRIKE"
+
+    def _pick_interrupt_strike(self, attacker: Wrestler, defender: Wrestler) -> str:
+        """Pick a legal standing strike for an interrupt."""
+        options = [n for n, mv in MOVES.items() if mv.get("type") == "Strike" and self._move_is_legal(n, attacker, defender)]
+        # Prefer affordable; otherwise fall back to cheapest.
+        affordable = [n for n in options if self._effective_cost(attacker, n) <= attacker.grit]
+        pool = affordable if affordable else options
+        if not pool:
+            return "Desperation Slap"
+        pool.sort(key=lambda n: (self._effective_cost(attacker, n), -int(MOVES[n]["damage"])))
+        return pool[0]
+
+    def _pin_victim_hp_pct(self, victim: Wrestler) -> float:
+        base = victim.hp_pct()
+        if victim.hp == 0:
+            base = min(base, 0.15)
+        # Depth update: damaged head makes pin timing harder.
+        if victim.is_critical_head():
+            base = min(1.0, base + 0.20)
+        return max(0.0, min(1.0, base))
+
     # --- Core move execution ---
-    def _execute_move(self, *, attacker: Wrestler, defender: Wrestler, move_name: str) -> None:
+    def _execute_move(self, *, attacker: Wrestler, defender: Wrestler, move_name: str, allow_reaction: bool = True) -> bool:
         if self.game_over:
-            return
+            return False
 
         if move_name != "Rest" and not self._move_is_legal(move_name, attacker, defender):
             self._log(f"{attacker.name} tried {move_name}, but it wasn't legal.")
-            return
+            return False
 
         move = MOVES[move_name]
         cost = int(move["cost"])
         if not attacker.spend_grit(cost):
             self._log(f"{attacker.name} doesn't have enough Grit for {move_name}.")
-            return
+            return False
 
         attacker_tag = "you" if attacker.is_player else "cpu"
         self._log_parts(
@@ -573,7 +751,7 @@ class TacticalWrestlingApp:
                 ]
             )
             self._update_hud()
-            return
+            return False
 
         if move_name == "Slow Stand Up":
             # 0-cost, low-reliability get-up.
@@ -585,41 +763,126 @@ class TacticalWrestlingApp:
                 attacker.set_state(WrestlerState.GROUNDED)
                 self._log_parts([(attacker.name, attacker_tag), (" can't quite stand yet...", "sys")])
             self._update_hud()
-            return
+            return False
+
+        if move_name == "Taunt":
+            attacker.add_hype(int(move.get("hype_gain", 0)))
+            self._log_parts([(attacker.name, attacker_tag), (" gets fired up!", "sys")])
+            self._update_hud()
+            return False
 
         mtype = move["type"]
 
-        # Lock-up (push/hold) creates a grapple opportunity.
+        # Lock Up: Neutral RPS vs opponent intent.
         if move_name == "Lock Up":
-            self._show_modal("Lock Up")
-            try:
-                player_won = lockup_minigame(
-                    self.root,
-                    title="Lock Up",
-                    prompt="Tie-up! PUSH or HOLD to fight for position.",
-                    host=self.modal_body,
-                )
-            finally:
-                self._hide_modal()
+            intent = self._simulated_player_intent() if defender.is_player else self._cpu_neutral_intent()
+            if defender.stun_turns > 0:
+                intent = "PASSIVE"
 
-            attacker_won = player_won if attacker.is_player else (not player_won)
-            if attacker_won:
-                self._log(f"{attacker.name} wins the tie-up!")
-                if attacker.is_player:
-                    follow = self._choose_grapple_followup(attacker, defender)
-                    if follow is None:
-                        self._log("No grapple available (or not enough Grit).")
-                    else:
-                        self._execute_move(attacker=attacker, defender=defender, move_name=follow)
+            if intent == "STRIKE":
+                strike = self._pick_interrupt_strike(defender, attacker)
+                strike_mv = MOVES[strike]
+                strike_dmg = int(strike_mv.get("damage", 0))
+
+                # Break-through logic: a hot/healthy wrestler can eat the shot and still secure the tie-up.
+                # Base 20% + (PlayerHype - CPUHype)% + (PlayerHealth% - CPUHealth%)/2
+                # (Generalized to attacker/defender.)
+                break_chance = 0.20
+                break_chance += (float(attacker.hype) - float(defender.hype)) / 100.0
+                break_chance += (float(attacker.hp_pct()) - float(defender.hp_pct())) / 2.0
+                break_chance = max(0.0, min(0.95, break_chance))
+
+                if random.random() < break_chance:
+                    self._log(f"{defender.name} nails an interrupt, but {attacker.name} powers through!")
+                    half = max(1, int(round(strike_dmg * 0.5))) if strike_dmg > 0 else 0
+                    if half > 0:
+                        attacker.take_damage(half, target_part=str(strike_mv.get("target_part", "BODY")))
+                    # Still proceed to lock-up clash.
+                    intent = "GRAPPLE"
                 else:
-                    options = [m for m in self._available_grapple_finishes(attacker, defender) if MOVES[m]["cost"] <= attacker.grit]
-                    if options:
-                        self._execute_move(attacker=attacker, defender=defender, move_name=random.choice(options))
+                    self._log(f"{defender.name} stuffs the lock-up attempt!")
+                    # Interrupt hit: no reaction menu.
+                    self._execute_move(attacker=defender, defender=attacker, move_name=strike, allow_reaction=False)
+                    self._update_hud()
+                    return False
+
+            if intent == "PASSIVE":
+                self._log(f"{defender.name} is caught flat-footed — grapple secured!")
+                self._enter_grapple(offense=attacker, defense=defender)
+                attacker.add_hype(int(move.get("hype_gain", 0)))
+                self._update_hud()
+                return True
+
+            # GRAPPLE: lock-up clash.
+            if attacker.is_player:
+                self._show_modal("Lock Up")
+                try:
+                    player_won = lockup_minigame(
+                        self.root,
+                        title="Lock Up",
+                        prompt="Clash! PUSH or HOLD to win position.",
+                        host=self.modal_body,
+                    )
+                finally:
+                    self._hide_modal()
+                attacker_won = bool(player_won)
             else:
-                self._log(f"{defender.name} fights you off and breaks the tie-up!")
+                # CPU turn: simulate the tie-up.
+                attacker_won = random.random() < 0.5
+
+            if attacker_won:
+                self._log(f"{attacker.name} wins the clash and takes control!")
+                self._enter_grapple(offense=attacker, defense=defender)
+                attacker.add_hype(int(move.get("hype_gain", 0)))
+                self._update_hud()
+                return True
+
+            self._log(f"{defender.name} wins the clash and turns it around!")
+            self._enter_grapple(offense=defender, defense=attacker)
+            defender.add_hype(int(move.get("hype_gain", 0)))
+            self._update_hud()
+            return False
+
+        # Chain Wrestling (in-grapple) – blind RPS for control.
+        if move_name == "Chain Wrestle":
+            if attacker.is_player:
+                self._show_modal("Chain Wrestling")
+                try:
+                    out = chain_wrestling_game(
+                        self.root,
+                        title="Chain Wrestling",
+                        prompt="POWER / SPEED / TECHNICAL",
+                        host=self.modal_body,
+                    )
+                finally:
+                    self._hide_modal()
+                result = str(out.get("result", "TIE"))
+            else:
+                # CPU: simulate blind RPS.
+                player = random.choice(["POWER", "SPEED", "TECHNICAL"])
+                cpu = random.choice(["POWER", "SPEED", "TECHNICAL"])
+                beats = {"POWER": "SPEED", "SPEED": "TECHNICAL", "TECHNICAL": "POWER"}
+                if player == cpu:
+                    result = "TIE"
+                elif beats[player] == cpu:
+                    result = "WIN"
+                else:
+                    result = "LOSS"
+
+            if result == "WIN":
+                attacker.next_damage_multiplier = 1.25
+                self._log(f"{attacker.name} maintains control! Next move hits harder.")
+                attacker.add_hype(int(move.get("hype_gain", 0)))
+            elif result == "LOSS":
+                self._log(f"{defender.name} reverses the hold and takes control!")
+                attacker.grapple_role = GrappleRole.DEFENSE
+                defender.grapple_role = GrappleRole.OFFENSE
+                defender.add_hype(int(move.get("hype_gain", 0)))
+            else:
+                self._log("Stalemate—still tied up!")
 
             self._update_hud()
-            return
+            return False
 
         # Pin / Submission resolve match-ending conditions.
         if mtype == "Pin":
@@ -630,7 +893,7 @@ class TacticalWrestlingApp:
                         self.root,
                         title="Pin Attempt",
                         prompt="PIN! Stop the marker in the green window to score the fall.",
-                        victim_hp_pct=defender.hp_pct(),
+                        victim_hp_pct=self._pin_victim_hp_pct(defender),
                         host=self.modal_body,
                     )
                 finally:
@@ -646,7 +909,7 @@ class TacticalWrestlingApp:
                         self.root,
                         title="Kick Out!",
                         prompt="KICK OUT! Stop the marker in the green window to survive.",
-                        victim_hp_pct=defender.hp_pct(),
+                        victim_hp_pct=self._pin_victim_hp_pct(defender),
                         host=self.modal_body,
                     )
                 finally:
@@ -656,7 +919,7 @@ class TacticalWrestlingApp:
                 else:
                     self._end_match("CPU", "PINFALL")
             self._update_hud()
-            return
+            return False
 
         if mtype == "Submission":
             if attacker.is_player:
@@ -692,9 +955,23 @@ class TacticalWrestlingApp:
                 else:
                     self._end_match("CPU", "SUBMISSION")
             self._update_hud()
-            return
+            return False
 
-        # Grapple QTE (player only) – restores the old timing minigame feel.
+        # Running failure: bad legs can cause a trip on running offense.
+        if (
+            move.get("req_user_state") == "RUNNING"
+            and attacker.state == WrestlerState.RUNNING
+            and attacker.is_critical_legs()
+            and move_name not in {"Stop Short"}
+            and random.random() < 0.50
+        ):
+            self._log(f"{attacker.name} stumbles—bad legs! They trip and go down!")
+            attacker.set_state(WrestlerState.GROUNDED)
+            attacker.take_damage(2)
+            self._update_hud()
+            return False
+
+        # Grapple QTE (player only) – timing affects damage on grapple finishers.
         if mtype == "Grapple" and attacker.is_player and int(move.get("damage", 0)) > 0:
             self._show_modal("Grapple Timing")
             try:
@@ -710,19 +987,30 @@ class TacticalWrestlingApp:
             timing = int(outcome["timing"])
             mult = float(outcome["multiplier"])
 
+            # One-shot chain wrestling buff.
+            buff = float(attacker.next_damage_multiplier)
+            attacker.next_damage_multiplier = 1.0
+
             if tier == "BOTCH":
                 self._log(f"BOTCH! (Timing {timing}%) You crash and burn!")
-                self.player.take_damage(6)
+                self.player.take_damage(6, target_part="BODY")
             else:
-                final = max(1, int(int(move["damage"]) * mult))
+                base_dmg = int(move["damage"])
+                final = max(1, int(base_dmg * mult * buff))
                 if tier == "CRIT":
                     self._log(f"PERFECT! (Timing {timing}%)")
                 elif tier == "HIT":
                     self._log(f"GOOD HIT! (Timing {timing}%)")
                 else:
                     self._log(f"WEAK... (Timing {timing}%)")
-                defender.take_damage(final)
+                defender.take_damage(final, target_part=str(move.get("target_part", "BODY")))
                 self._log(f"{defender.name} takes {final} damage.")
+
+                attacker.add_hype(int(move.get("hype_gain", 0)))
+
+                if str(move.get("target_part", "BODY")) == "HEAD" and defender.is_critical_head() and random.random() < 0.25:
+                    defender.stun_turns += 1
+                    self._log(f"{defender.name} looks rocked!")
 
             # Apply state transitions after QTE resolution if not botched.
             if tier != "BOTCH":
@@ -731,25 +1019,33 @@ class TacticalWrestlingApp:
                 if "set_target_state" in move:
                     defender.set_state(WrestlerState(move["set_target_state"]))
 
+            self._clear_grapple_roles_if_exited(attacker, defender)
+            attacker.take_damage(2, target_part="LEGS")
             if defender.hp == 0:
                 self._log(f"{defender.name} is exhausted (0 HP) — they're very vulnerable to Pin/Submission.")
 
             self._update_hud()
-            return
+            return False
 
         raw_damage = int(move["damage"])
         negated = False
 
+        # One-shot chain wrestling buff.
+        dmg_mult = float(attacker.next_damage_multiplier)
+        attacker.next_damage_multiplier = 1.0
+
         # Fluid Momentum: Player gets a reaction menu when CPU attacks.
-        if (not attacker.is_player) and raw_damage > 0:
-            reaction = self._reaction_menu(raw_damage)
+        if (not attacker.is_player) and raw_damage > 0 and allow_reaction:
+            final_incoming = max(1, int(raw_damage * dmg_mult))
+            reaction = self._reaction_menu(final_incoming)
             self._update_hud()
             choice = reaction.get("choice", "BRACE")
 
             if choice == "BRACE":
-                dmg = int((raw_damage + 1) // 2)
-                self.player.take_damage(dmg)
+                dmg = int((final_incoming + 1) // 2)
+                self.player.take_damage(dmg, target_part=str(move.get("target_part", "BODY")))
                 self._log_parts([(self.player.name, "you"), (" braces and takes ", "sys"), (f"{dmg}", "dmg"), (" damage.", "sys")])
+                attacker.add_hype(int(move.get("hype_gain", 0)))
             elif choice == "DODGE":
                 score = self._reaction_skill_check()
                 chance = 0.8 if score >= 0.6 else 0.2
@@ -757,20 +1053,22 @@ class TacticalWrestlingApp:
                     negated = True
                     self._log("You dodge it!")
                 else:
-                    self.player.take_damage(raw_damage)
-                    self._log_parts([(self.player.name, "you"), (" takes ", "sys"), (f"{raw_damage}", "dmg"), (" damage.", "sys")])
+                    self.player.take_damage(final_incoming, target_part=str(move.get("target_part", "BODY")))
+                    self._log_parts([(self.player.name, "you"), (" takes ", "sys"), (f"{final_incoming}", "dmg"), (" damage.", "sys")])
+                    attacker.add_hype(int(move.get("hype_gain", 0)))
             else:  # REVERSAL
                 score = self._reaction_skill_check()
                 chance = 0.6 if score >= 0.6 else 0.1
                 if random.random() < chance:
                     negated = True
                     self._log("REVERSAL! You turn it around!")
-                    back = max(1, int(raw_damage * 0.8))
-                    self.cpu.take_damage(back)
+                    back = max(1, int(final_incoming * 0.8))
+                    self.cpu.take_damage(back, target_part="BODY")
                     self._log_parts([(self.cpu.name, "cpu"), (" takes ", "sys"), (f"{back}", "dmg"), (" damage back.", "sys")])
                 else:
-                    self.player.take_damage(raw_damage)
-                    self._log_parts([(self.player.name, "you"), (" takes ", "sys"), (f"{raw_damage}", "dmg"), (" damage.", "sys")])
+                    self.player.take_damage(final_incoming, target_part=str(move.get("target_part", "BODY")))
+                    self._log_parts([(self.player.name, "you"), (" takes ", "sys"), (f"{final_incoming}", "dmg"), (" damage.", "sys")])
+                    attacker.add_hype(int(move.get("hype_gain", 0)))
         else:
             # Normal damage application (player attacking CPU, or non-damaging CPU move)
             if raw_damage > 0:
@@ -780,10 +1078,17 @@ class TacticalWrestlingApp:
                         raw_damage = 0
                         negated = True
 
-                defender.take_damage(raw_damage)
-                dtag = "you" if defender.is_player else "cpu"
-                if raw_damage > 0:
-                    self._log_parts([(defender.name, dtag), (" takes ", "sys"), (f"{raw_damage}", "dmg"), (" damage.", "sys")])
+                final_damage = 0 if negated or raw_damage <= 0 else max(1, int(raw_damage * dmg_mult))
+                if final_damage > 0:
+                    defender.take_damage(final_damage, target_part=str(move.get("target_part", "BODY")))
+                    dtag = "you" if defender.is_player else "cpu"
+                    self._log_parts([(defender.name, dtag), (" takes ", "sys"), (f"{final_damage}", "dmg"), (" damage.", "sys")])
+
+                if not negated:
+                    attacker.add_hype(int(move.get("hype_gain", 0)))
+                    if str(move.get("target_part", "BODY")) == "HEAD" and defender.is_critical_head() and random.random() < 0.25:
+                        defender.stun_turns += 1
+                        self._log(f"{defender.name} looks rocked!")
 
         # State transitions only happen if the hit wasn't fully negated (dodge/reversal).
         if not negated:
@@ -793,16 +1098,22 @@ class TacticalWrestlingApp:
                     defender.set_state(WrestlerState.GROUNDED)
                     self._log("It worked! They stumble and hit the mat.")
 
+            if raw_damage == 0:
+                attacker.add_hype(int(move.get("hype_gain", 0)))
+
             if "set_user_state" in move:
                 attacker.set_state(WrestlerState(move["set_user_state"]))
             if "set_target_state" in move:
                 defender.set_state(WrestlerState(move["set_target_state"]))
+
+            self._clear_grapple_roles_if_exited(attacker, defender)
 
         # If someone is at 0 HP, it only affects pin/sub difficulty.
         if defender.hp == 0:
             self._log(f"{defender.name} is exhausted (0 HP) — they're very vulnerable to Pin/Submission.")
 
         self._update_hud()
+        return False
 
 
 if __name__ == "__main__":
