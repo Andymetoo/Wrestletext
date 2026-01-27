@@ -390,7 +390,7 @@ class TacticalWrestlingApp:
 
     def _update_hud(self) -> None:
         def role(w: Wrestler) -> str:
-            if w.state != WrestlerState.GRAPPLED or w.grapple_role is None:
+            if (not w.is_in_grapple()) or w.grapple_role is None:
                 return ""
             return f" ({w.grapple_role.value})"
 
@@ -426,10 +426,21 @@ class TacticalWrestlingApp:
             return False
         ru = move["req_user_state"]
         rt = move["req_target_state"]
-        if ru != "ANY" and ru != user.state.value:
-            return False
-        if rt != "ANY" and rt != target.state.value:
-            return False
+
+        # Back-compat: older move DBs may still use the generic token 'GRAPPLED'.
+        if ru != "ANY":
+            if ru in {"GRAPPLED", "GRAPPLE_ANY"}:
+                if not user.is_in_grapple():
+                    return False
+            elif ru != user.state.value:
+                return False
+
+        if rt != "ANY":
+            if rt in {"GRAPPLED", "GRAPPLE_ANY"}:
+                if not target.is_in_grapple():
+                    return False
+            elif rt != target.state.value:
+                return False
         return True
 
     def _is_universal_action(self, move_name: str) -> bool:
@@ -461,9 +472,16 @@ class TacticalWrestlingApp:
             if self._move_is_legal("Rest", user, target) and self._passes_moveset(user, "Rest"):
                 names.append("Rest")
 
-        # Grapple restrictions: defender mostly fights for control.
-        if user.state == WrestlerState.GRAPPLED and user.grapple_role == GrappleRole.DEFENSE:
-            names = [n for n in names if n == "Chain Wrestle"]
+        # Grapple restrictions: in the WEAK tie-up, the defender mostly fights for control.
+        # (Other grapple tiers will later get dedicated reversals/strikes.)
+        if (
+            user.state == WrestlerState.GRAPPLE_WEAK
+            and target.state == WrestlerState.GRAPPLE_WEAK
+            and user.grapple_role == GrappleRole.DEFENSE
+        ):
+            defensive_names = [n for n in names if n == "Chain Wrestle"]
+            if defensive_names:
+                names = defensive_names
 
         def key(n: str) -> tuple[int, int, str]:
             t = MOVES[n]["type"]
@@ -659,13 +677,40 @@ class TacticalWrestlingApp:
             t = mv["type"]
             base += float(int(mv.get("hype_gain", 0))) * 0.10
 
+            # --- Grapple tier awareness (AKI-style) ---
+            if self.cpu.state == WrestlerState.GRAPPLE_WEAK:
+                # CPU wants to tier up when it has resources.
+                if name == "Deepen Hold":
+                    if self.cpu.grit > 8 or self.cpu.hype > 70:
+                        base += 18.0
+                    else:
+                        base -= 4.0
+
+                # When low on grit, prefer cheaper, safer weak options.
+                if self.cpu.grit <= 5:
+                    cost = float(self._effective_cost(self.cpu, name))
+                    if cost <= 3 and float(mv.get("damage", 0)) > 0:
+                        base += 4.0
+                    if cost >= 6:
+                        base -= 2.0
+
+            elif self.cpu.state == WrestlerState.GRAPPLE_STRONG:
+                # In strong holds, prioritize big damage and finishers.
+                if t == "Grapple":
+                    base += 4.0
+                if bool(mv.get("is_finisher")):
+                    base += 6.0
+                # If opponent is softened up, pressing for a finisher is even better.
+                if bool(mv.get("is_finisher")) and self.player.hp_pct() < 0.40:
+                    base += 6.0
+
             # Neutral grappling pressure.
             if name == "Lock Up" and self.cpu.state == WrestlerState.STANDING and self.player.state == WrestlerState.STANDING:
                 base += 6.0
             if name == "Taunt" and self.cpu.hype < 80:
                 base += 3.0
 
-            if name == "Chain Wrestle" and self.cpu.state == WrestlerState.GRAPPLED:
+            if name == "Chain Wrestle" and self.cpu.is_in_grapple():
                 base += 5.0
             if t == "Pin" and self.player.state == WrestlerState.GROUNDED:
                 base += 25.0 * (1.0 - self.player.hp_pct())
@@ -815,13 +860,14 @@ class TacticalWrestlingApp:
         return 0 if w.is_flow() else base
 
     def _enter_grapple(self, *, offense: Wrestler, defense: Wrestler) -> None:
-        offense.set_state(WrestlerState.GRAPPLED)
-        defense.set_state(WrestlerState.GRAPPLED)
+        # Phase 1 mapping: entering a grapple starts in GRAPPLE_WEAK.
+        offense.set_state(WrestlerState.GRAPPLE_WEAK)
+        defense.set_state(WrestlerState.GRAPPLE_WEAK)
         offense.grapple_role = GrappleRole.OFFENSE
         defense.grapple_role = GrappleRole.DEFENSE
 
     def _clear_grapple_roles_if_exited(self, a: Wrestler, b: Wrestler) -> None:
-        if a.state != WrestlerState.GRAPPLED or b.state != WrestlerState.GRAPPLED:
+        if (not a.is_in_grapple()) or (not b.is_in_grapple()):
             a.grapple_role = None
             b.grapple_role = None
 
@@ -1046,6 +1092,56 @@ class TacticalWrestlingApp:
 
             self._update_hud()
             return False
+
+        # Grapple Gateway: tier-up from WEAK -> STRONG.
+        # This is the AKI-style struggle point.
+        if move_name == "Deepen Hold":
+            # Only meaningful from a weak tie-up.
+            if attacker.state != WrestlerState.GRAPPLE_WEAK or defender.state != WrestlerState.GRAPPLE_WEAK:
+                self._log("No opening to deepen the hold.")
+                self._update_hud()
+                return False
+
+            if attacker.is_player:
+                self._show_modal("Deepen Hold")
+                try:
+                    out = chain_wrestling_game(
+                        self.root,
+                        title="Deepen Hold",
+                        prompt="Secure the hold: POWER / SPEED / TECHNICAL",
+                        host=self.modal_content,
+                    )
+                finally:
+                    self._hide_modal()
+                outcome = str(out.get("result", "TIE"))
+            else:
+                # CPU: simulate blind RPS.
+                player = random.choice(["POWER", "SPEED", "TECHNICAL"])
+                cpu = random.choice(["POWER", "SPEED", "TECHNICAL"])
+                beats = {"POWER": "SPEED", "SPEED": "TECHNICAL", "TECHNICAL": "POWER"}
+                if player == cpu:
+                    outcome = "TIE"
+                elif beats[player] == cpu:
+                    outcome = "WIN"
+                else:
+                    outcome = "LOSS"
+
+            # WIN: allow the move DB's state changes to apply below.
+            if outcome == "WIN":
+                self._log(f"{attacker.name} secures a strong hold!")
+            # LOSS: break the grapple completely.
+            elif outcome == "LOSS":
+                self._log(f"{defender.name} pushes them away! Grapple broken.")
+                attacker.set_state(WrestlerState.STANDING)
+                defender.set_state(WrestlerState.STANDING)
+                self._clear_grapple_roles_if_exited(attacker, defender)
+                self._update_hud()
+                return False
+            # TIE: remain in GRAPPLE_WEAK and prevent tier-up.
+            else:
+                self._log("Stalemate! Still in a weak clinch.")
+                self._update_hud()
+                return False
 
         # Pin / Submission resolve match-ending conditions.
         if mtype == "Pin":

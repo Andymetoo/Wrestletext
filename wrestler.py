@@ -49,7 +49,10 @@ class WrestlerState(str, Enum):
     GROUNDED = "GROUNDED"
     TOP_ROPE = "TOP_ROPE"
     RUNNING = "RUNNING"
-    GRAPPLED = "GRAPPLED"
+    # Grapple tiers (AKI-style)
+    GRAPPLE_WEAK = "GRAPPLE_WEAK"  # initial tie-up (light moves, whip, go-behind)
+    GRAPPLE_STRONG = "GRAPPLE_STRONG"  # deep control (big throws, specials)
+    GRAPPLE_BACK = "GRAPPLE_BACK"  # behind opponent (back suplexes, schoolboy)
 
 
 class GrappleRole(str, Enum):
@@ -78,7 +81,7 @@ class Wrestler:
     # Limb health (0..100)
     body_parts: dict[str, int] = None  # set in __post_init__
 
-    # Grapple control (only meaningful while GRAPPLED)
+    # Grapple control (only meaningful while in a grapple tier)
     grapple_role: GrappleRole | None = None
 
     # Status
@@ -177,9 +180,16 @@ class Wrestler:
     def set_state(self, new_state: WrestlerState) -> None:
         self.state = new_state
 
+    def is_in_grapple(self) -> bool:
+        return self.state in {
+            WrestlerState.GRAPPLE_WEAK,
+            WrestlerState.GRAPPLE_STRONG,
+            WrestlerState.GRAPPLE_BACK,
+        }
+
     def clear_grapple(self) -> None:
         self.grapple_role = None
-        if self.state == WrestlerState.GRAPPLED:
+        if self.is_in_grapple():
             self.state = WrestlerState.STANDING
 
     def add_hype(self, amount: int) -> None:
