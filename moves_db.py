@@ -1,40 +1,13 @@
 """Move registry for the state-based tactical wrestling simulation.
 
-Each move entry contains the required fields:
-- damage: int
-- cost: int (Grit)
-- type: one of (Strike, Grapple, Aerial, Submission, Pin, Setup)
-- req_user_state: one of (STANDING, GROUNDED, TOP_ROPE, RUNNING, GRAPPLE_WEAK, GRAPPLE_STRONG, GRAPPLE_BACK, ANY)
-- req_target_state: one of (STANDING, GROUNDED, TOP_ROPE, RUNNING, GRAPPLE_WEAK, GRAPPLE_STRONG, GRAPPLE_BACK, ANY)
-- flavor_text: str
-
-N64 additions:
-- target_part: one of (HEAD, BODY, LEGS, NONE)
-- hype_gain: int (0-100). Applied only on successful execution.
-- is_finisher: bool
-
-Optional fields used by the engine:
-- set_user_state: str
-- set_target_state: str
-- notes: str (non-functional metadata)
-"""
-
-from __future__ import annotations
-
-"""Move registry for the state-based tactical wrestling simulation.
-
 Refactored for AKI-style Hierarchy:
-STANDING -> GRAPPLE_WEAK -> GRAPPLE_STRONG
-                         -> GRAPPLE_BACK
+STANDING -> GRAPPLE_WEAK -> GRAPPLE_STRONG -> GRAPPLE_BACK
 """
-
 from __future__ import annotations
 
 from typing import Any, Dict
 
-
 Move = Dict[str, Any]
-
 
 MOVES: Dict[str, Move] = {
     # =========================================================================
@@ -97,7 +70,7 @@ MOVES: Dict[str, Move] = {
         "type": "Setup",
         "req_user_state": "STANDING",
         "req_target_state": "STANDING",
-        "set_user_state": "GRAPPLE_WEAK",  # <--- THE GATEWAY
+        "set_user_state": "GRAPPLE_WEAK",
         "set_target_state": "GRAPPLE_WEAK",
         "target_part": "NONE",
         "hype_gain": 2,
@@ -148,7 +121,7 @@ MOVES: Dict[str, Move] = {
         "type": "Setup",
         "req_user_state": "GRAPPLE_WEAK",
         "req_target_state": "GRAPPLE_WEAK",
-        "set_user_state": "GRAPPLE_STRONG",  # <--- TIER UP
+        "set_user_state": "GRAPPLE_STRONG",
         "set_target_state": "GRAPPLE_STRONG",
         "target_part": "NONE",
         "hype_gain": 0,
@@ -162,7 +135,7 @@ MOVES: Dict[str, Move] = {
         "type": "Setup",
         "req_user_state": "GRAPPLE_WEAK",
         "req_target_state": "GRAPPLE_WEAK",
-        "set_user_state": "GRAPPLE_BACK",  # <--- FLANK
+        "set_user_state": "GRAPPLE_BACK",
         "set_target_state": "GRAPPLE_BACK",
         "target_part": "NONE",
         "hype_gain": 2,
