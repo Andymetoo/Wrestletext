@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from cards import Card, Deck
+
 
 MAX_HEALTH = 100
 
@@ -65,14 +67,17 @@ class Wrestler:
     name: str
     is_player: bool
 
+    # Card archetype (affects deck distribution)
+    archetype: str = "BALANCED"  # "JOBBER" | "BALANCED" | "SUPERSTAR"
+
     # Character identity
     moveset: list[str] | None = None
     finisher: str | None = None
 
     hp: int = MAX_HEALTH
     state: WrestlerState = WrestlerState.STANDING
-    grit: int = 10
-    max_grit: int = 15
+    grit: int = 5
+    max_grit: int = 10
 
     # N64-style meters/systems
     hype: int = 0  # 0..100
@@ -90,6 +95,10 @@ class Wrestler:
     # One-shot combat modifiers
     next_damage_multiplier: float = 1.0
 
+    # Card system
+    deck: Deck | None = None
+    hand: list[Card] | None = None
+
     def __post_init__(self) -> None:
         if self.body_parts is None:
             self.body_parts = {"HEAD": 100, "BODY": 100, "LEGS": 100}
@@ -100,6 +109,12 @@ class Wrestler:
         if self.finisher is None:
             # Reasonable default for the brawler archetype.
             self.finisher = "Powerbomb" if "Powerbomb" in self.moveset else (self.moveset[-1] if self.moveset else "Powerbomb")
+
+        if self.deck is None:
+            self.deck = Deck(self.archetype)
+        if self.hand is None:
+            self.hand = []
+        self.draw_to_full()
 
     def hp_pct(self) -> float:
         return max(0.0, min(1.0, self.hp / MAX_HEALTH))
@@ -121,42 +136,58 @@ class Wrestler:
         return int(self.body_parts.get("LEGS", 100)) < 25
 
     def regen_grit(self) -> int:
-        """Regenerate grit at the start of this wrestler's turn.
+        """Legacy hook.
 
-        If HP > 75%: +3
-        If HP 25-75%: +2
-        If HP < 25%: +1
+        Phase 2: grit economy is card-driven, so this is a no-op.
         """
-        pct = self.hp_pct()
-        if pct > 0.75:
-            gain = 3
-        elif pct >= 0.25:
-            gain = 2
-        else:
-            gain = 1
-
-        # Body damage reduces stamina recovery.
-        if self.is_critical_body():
-            gain = max(0, gain // 2)
-
-        # Flow state: grit regen doubles.
-        if self.is_flow():
-            gain *= 2
-
-        before = self.grit
-        self.grit = min(self.max_grit, self.grit + gain)
-        return self.grit - before
+        return 0
 
     def spend_grit(self, amount: int) -> bool:
-        # Flow state: all costs are 0.
-        if self.is_flow():
-            return True
         if amount <= 0:
             return True
         if self.grit < amount:
             return False
         self.grit -= amount
         return True
+
+    # --- Card helpers ---
+    def draw_to_full(self, *, hand_size: int = 5) -> None:
+        if self.hand is None or self.deck is None:
+            return
+        need = max(0, int(hand_size) - len(self.hand))
+        if need <= 0:
+            return
+        self.hand.extend(self.deck.draw(need))
+        self.hand.sort(key=lambda c: c.value)
+
+    def deck_remaining(self) -> int:
+        if self.deck is None:
+            return 0
+        return self.deck.remaining()
+
+    def can_afford_cards(self, cards: list[Card]) -> bool:
+        total_cost = sum(c.grit_cost() for c in cards)
+        return self.grit >= total_cost
+
+    def apply_grit_from_cards(self, cards: list[Card]) -> int:
+        """Apply card-driven grit economy.
+
+        - Cards 6-10: cost 2 grit each
+        - Cards 1-5: regen +1 grit each
+        """
+        before = self.grit
+        cost = sum(c.grit_cost() for c in cards)
+        regen = sum(c.grit_regen() for c in cards)
+        self.grit = max(0, min(self.max_grit, self.grit - cost + regen))
+        return self.grit - before
+
+    def discard_cards(self, cards: list[Card]) -> None:
+        if self.hand is None or self.deck is None:
+            return
+        for c in cards:
+            if c in self.hand:
+                self.hand.remove(c)
+                self.deck.discards.append(c)
 
     def take_damage(self, amount: int, *, target_part: str | None = None, limb_scale: float = 2.0) -> int:
         """Apply HP damage and (optionally) limb damage.

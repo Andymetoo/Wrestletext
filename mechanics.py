@@ -382,7 +382,7 @@ def lockup_minigame(
         justify=("left" if embedded else "center"),
         anchor=("w" if embedded else "center"),
         wraplength=(content_w if embedded else 0),
-    ).pack(padx=12, pady=(12, 6), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
+    ).pack(padx=12, pady=(10, 4), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
     tk.Label(
         container,
         text="Get closer to 15 without going over.",
@@ -392,17 +392,17 @@ def lockup_minigame(
         justify=("left" if embedded else "center"),
         anchor=("w" if embedded else "center"),
         wraplength=(content_w if embedded else 0),
-    ).pack(padx=12, pady=(0, 10), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
+    ).pack(padx=12, pady=(0, 6), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
 
     scores = {"p": 0, "c": 0}
     result = {"done": False, "success": False}
     done_var = tk.BooleanVar(value=False)
 
     status = tk.Label(container, text="YOU: 0   |   CPU: 0", font=("Arial", 12, "bold"), bg=colors["bg"], fg=colors["fg"])
-    status.pack(padx=12, pady=(0, 10), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
+    status.pack(padx=12, pady=(0, 6), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
 
     log = tk.Label(container, text="", font=("Arial", 9), bg=colors["bg"], fg=colors["subfg"])
-    log.pack(padx=12, pady=(0, 10), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
+    log.pack(padx=12, pady=(0, 6), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
 
     def refresh() -> None:
         status.config(text=f"YOU: {scores['p']}   |   CPU: {scores['c']}")
@@ -452,9 +452,25 @@ def lockup_minigame(
             finish(False, "CPU muscles you around and takes control!")
 
     btns = tk.Frame(container, bg=colors["bg"])
-    btns.pack(padx=12, pady=(0, 12), fill="x")
-    ttk.Button(btns, text="PUSH", command=push, style=("Embed.TButton" if host is not None else "TButton")).pack(fill="x", pady=4)
-    ttk.Button(btns, text="HOLD", command=hold, style=("Embed.TButton" if host is not None else "TButton")).pack(fill="x", pady=4)
+    btns.pack(padx=12, pady=(0, 10), fill="x")
+
+    # Compact layout when embedded so controls don't fall below the app's Hand bar.
+    if embedded:
+        ttk.Button(
+            btns,
+            text="PUSH",
+            command=push,
+            style=("Embed.TButton" if host is not None else "TButton"),
+        ).pack(side="left", expand=True, fill="x", padx=(0, 6))
+        ttk.Button(
+            btns,
+            text="HOLD",
+            command=hold,
+            style=("Embed.TButton" if host is not None else "TButton"),
+        ).pack(side="left", expand=True, fill="x")
+    else:
+        ttk.Button(btns, text="PUSH", command=push, style=("Embed.TButton" if host is not None else "TButton")).pack(fill="x", pady=4)
+        ttk.Button(btns, text="HOLD", command=hold, style=("Embed.TButton" if host is not None else "TButton")).pack(fill="x", pady=4)
 
     refresh()
     parent.after(timeout_ms, timeout)

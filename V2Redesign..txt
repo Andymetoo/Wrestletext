@@ -1,0 +1,535 @@
+PART I: The rules.
+That prompt covers the Core Combat Loop (The Card Engine, Grit, and Clash Logic) perfectly, but it is missing one critical piece we discussed: The New Submission/Pin Mechanic.
+
+Remember, we agreed to scrap the old QTEs for a "Discard to Sum" Loop (discard cards to beat a threshold of 25, no redrawing). If you give Copilot the current prompt, it will delete the old minigames but won't know how to resolve a Pin or Submission, likely causing the game to crash or do nothing when those moves are picked.
+
+Here is the Revised Sister Prompt that includes the Submission/Pin logic so the system is fully functional from the start.
+
+Revised Prompt for Copilot (Complete)
+Subject: Major Refactor - Implementing "Phase 2" Card-Based Combat System
+
+Context: We are completely redesigning the core combat engine. We are moving away from "Simulation/Dice Rolls" to a Strategic Deck-Building System.
+
+The New Core Rules:
+
+The Clash: Players pick a Move and play 1 or 2 Cards from their hand (5 cards). High score wins.
+
+Grit Economy: High cards (6-10) cost Grit (Value - 5). Low cards (1-5) regenerate Grit (6 - Value).
+
+Doubles: Playing two matching cards (e.g., two 8s) adds +5 to the total value.
+
+Color Match: Cards have colors (Red=Strike, Blue=Grapple, etc.). Matching the card color to the move type gives +1 value.
+
+Ties: If scores are tied, trigger the existing lockup_minigame (Push/Hold) to decide the winner.
+
+The New Submission/Pin Rules (The "Survival Loop"):
+
+Trigger: When a Pin or Submission move is successfully executed.
+
+Mechanic: The defender enters a "Survival Mode." They cannot play moves.
+
+The Goal: The defender must discard cards from their current hand to reach a Sum Threshold (e.g., 15-25 points depending on health).
+
+Constraint: The defender does NOT draw new cards during this loop. They have 3 "tries" (turns) to meet the sum using only what is in their hand. If they run out of cards or turns, they lose the match.
+
+Implementation Plan:
+
+Step 1: Create cards.py Create a new file to handle Card, Deck (Jobber/Star archetypes), and Hand logic.
+
+Action: Create the file with the code provided below.
+
+Step 2: Update wrestler.py Refactor the Wrestler class to use self.deck and self.hand. Remove old stat blocks.
+
+Action: Replace wrestler.py with the code provided below.
+
+Step 3: Overhaul main.py
+
+UI: Remove the 16-button grid. Add a "Move Selector" (Listbox) and "Hand View" (5 colored rectangles at the bottom).
+
+Clash Logic: Implement _resolve_clash to compare scores and handle Grit regeneration/spending.
+
+Submission Logic: Create _submission_loop that pauses the normal game flow and prompts the defender to click cards to discard until they beat the threshold or run out of options.
+
+The Code to Implement: (Paste the cards.py, wrestler.py, and main.py snippets I provided previously. Note: You will need to ask Copilot to "Please write the _submission_loop logic in main.py based on the rules above" as I haven't written that specific snippet for you yet.)
+
+PART II: Gemini Code Suggestion.
+NOTE: Gemini potentially has access to older version of the codebase, and YOU know the code better, so implement this with your best judgement and at your own discretion...we do NOT need to stick to this 100%, just get the logic and flow down.
+
+This is a clean, definitive set of rules. I have everything I need to build the new engine.
+
+We are shifting from a Stats/Dice Simulation to a Deck-Building Strategy Game.
+
+Here is the plan to implement this "Phase 2" Redesign:
+
+New File cards.py: Handles the Card, Deck, and Hand logic. It manages shuffling, drawing, strength calculation, and valid plays (e.g., detecting doubles).
+
+Update wrestler.py: Replaces the old stat blocks with the new Deck system. Jobbers get "weak" decks (more 1s-3s), Stars get "strong" decks.
+
+Update main.py: The biggest change.
+
+UI: Remove the 16-button move grid. Replace it with a "Move Selector" (List) and a "Hand View" (5 colored rectangles at the bottom).
+
+Input: Player clicks a Move -> Player selects 1 or 2 Cards -> Clicks "GO".
+
+Resolution: Compares totals, handles the Grit Economy (High cards cost Grit, Low cards regen Grit).
+
+Here are the files.
+
+1. New File: cards.py
+Save this as a new file. It handles all the "War" logic.
+
+Python
+from __future__ import annotations
+import random
+from dataclasses import dataclass, field
+
+# Card Colors / Suits
+# GRAY: Neutral (No bonus)
+# RED: Strike Bonus
+# BLUE: Grapple Bonus
+# GREEN: Submission Bonus
+# YELLOW: Aerial/Special Bonus
+COLORS = ["GRAY", "RED", "BLUE", "GREEN", "YELLOW"]
+HEX_COLORS = {
+    "GRAY": "#777777",
+    "RED": "#ff4444",
+    "BLUE": "#4488ff",
+    "GREEN": "#44ff44",
+    "YELLOW": "#ffff44",
+}
+
+@dataclass
+class Card:
+    value: int  # 1-10
+    color: str  # "GRAY", "RED", etc.
+    uid: int = field(default_factory=lambda: random.randint(0, 1000000))
+
+    def get_grit_cost(self) -> int:
+        """Cards 6-10 cost Grit (Value - 5). Cards 1-5 are free."""
+        if self.value <= 5:
+            return 0
+        return self.value - 5
+
+    def get_grit_regen(self) -> int:
+        """Cards 1-5 regen Grit (6 - Value). Cards 6-10 regen 0."""
+        if self.value > 5:
+            return 0
+        return 6 - self.value
+
+    def bonus_for_move_type(self, move_type: str) -> int:
+        """Returns +1 if card color matches the move type."""
+        # Simple mapping: Move Type -> Card Color
+        # Adjust these keys to match your MOVES_DB types exactly
+        mapping = {
+            "Strike": "RED",
+            "Grapple": "BLUE",
+            "Submission": "GREEN",
+            "Aerial": "YELLOW",
+            "Pin": "GREEN", # Pins fit well with submission/technical color
+        }
+        if mapping.get(move_type) == self.color:
+            return 1
+        return 0
+
+class Deck:
+    def __init__(self, archetype: str = "BALANCED"):
+        self.cards: list[Card] = []
+        self.discards: list[Card] = []
+        self._build(archetype)
+        self.shuffle()
+
+    def _build(self, archetype: str) -> None:
+        """Build a 50-card deck based on wrestler tier."""
+        # 1. Standard distribution (approximate curve)
+        # Jobber: Skew low. Star: Skew high.
+        
+        counts = {} 
+        # Value: Count
+        if archetype == "JOBBER":
+            # Lots of 1s, 2s, 3s. Few 8s, 9s, 10s.
+            dist = {1:8, 2:8, 3:8, 4:6, 5:6, 6:5, 7:4, 8:2, 9:2, 10:1}
+        elif archetype == "SUPERSTAR":
+            # Balanced / High power
+            dist = {1:3, 2:3, 3:4, 4:5, 5:6, 6:6, 7:6, 8:6, 9:6, 10:5}
+        else: # BALANCED / STANDARD
+            dist = {1:5, 2:5, 3:5, 4:5, 5:5, 6:5, 7:5, 8:5, 9:5, 10:5}
+
+        # Create the cards
+        for val, count in dist.items():
+            for _ in range(count):
+                # Random color assignment
+                # Jobbers might have more GRAYS, Stars have more COLORS.
+                if archetype == "SUPERSTAR":
+                    # 20% Gray, 80% Colored
+                    color = random.choice(COLORS) if random.random() > 0.2 else "GRAY"
+                else:
+                    # 50% Gray, 50% Colored
+                    color = random.choice(COLORS) if random.random() > 0.5 else "GRAY"
+                
+                self.cards.append(Card(val, color))
+                
+        # Ensure exactly 50 cards (truncate or fill randoms if math was off)
+        while len(self.cards) > 50:
+            self.cards.pop()
+        while len(self.cards) < 50:
+            self.cards.append(Card(random.randint(1,5), "GRAY"))
+
+    def shuffle(self) -> None:
+        self.cards.extend(self.discards)
+        self.discards.clear()
+        random.shuffle(self.cards)
+
+    def draw(self, amount: int = 1) -> list[Card]:
+        drawn = []
+        for _ in range(amount):
+            if not self.cards:
+                self.shuffle() # Reshuffle if empty
+            if self.cards:
+                drawn.append(self.cards.pop())
+        return drawn
+    
+    def total_strength(self) -> int:
+        """Sum of all cards in deck + discards + hand (handled externally)."""
+        return sum(c.value for c in self.cards) + sum(c.value for c in self.discards)
+
+2. Update: wrestler.py
+Replace the file with this code. It removes the old minigame logic and adds the Deck.
+
+Python
+from __future__ import annotations
+from dataclasses import dataclass
+from enum import Enum
+from cards import Deck, Card  # Ensure cards.py is in the same folder
+
+MAX_HEALTH = 100
+
+class WrestlerState(str, Enum):
+    STANDING = "STANDING"
+    GROUNDED = "GROUNDED"
+    TOP_ROPE = "TOP_ROPE"
+    RUNNING = "RUNNING"
+    GRAPPLE_WEAK = "GRAPPLE_WEAK"
+    GRAPPLE_STRONG = "GRAPPLE_STRONG"
+    GRAPPLE_BACK = "GRAPPLE_BACK"
+
+class GrappleRole(str, Enum):
+    OFFENSE = "OFFENSE"
+    DEFENSE = "DEFENSE"
+
+@dataclass
+class Wrestler:
+    name: str
+    is_player: bool
+    archetype: str = "BALANCED" # "JOBBER", "BALANCED", "SUPERSTAR"
+
+    moveset: list[str] | None = None
+    finisher: str | None = None
+
+    hp: int = MAX_HEALTH
+    state: WrestlerState = WrestlerState.STANDING
+    
+    # Grit System (Now linked to Cards)
+    grit: int = 5   # Starting Grit
+    max_grit: int = 15
+
+    # Card System
+    deck: Deck = None
+    hand: list[Card] = None
+
+    # Status
+    stun_turns: int = 0
+    grapple_role: GrappleRole | None = None
+    
+    # One-shot modifiers
+    next_damage_multiplier: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.moveset is None:
+            # Default moveset if none provided
+            self.moveset = ["Jab", "Front Kick", "Lock Up", "Rest", "Chain Wrestle", "Snap Suplex", "DDT", "Powerbomb", "Irish Whip", "Clothesline", "Stomp", "Pin", "Submission Hold"]
+            
+        if self.finisher is None:
+            self.finisher = "Powerbomb"
+
+        # Initialize Deck
+        self.deck = Deck(self.archetype)
+        self.hand = []
+        self.draw_to_full()
+
+    def hp_pct(self) -> float:
+        return max(0.0, min(1.0, self.hp / MAX_HEALTH))
+
+    def draw_to_full(self) -> None:
+        """Draw until hand has 5 cards."""
+        needed = 5 - len(self.hand)
+        if needed > 0:
+            new_cards = self.deck.draw(needed)
+            self.hand.extend(new_cards)
+            # Sort hand for easier reading (optional, but nice)
+            self.hand.sort(key=lambda c: c.value)
+
+    def can_afford_card(self, card: Card) -> bool:
+        return self.grit >= card.get_grit_cost()
+
+    def play_cards(self, cards_to_play: list[Card]) -> None:
+        """Remove specific cards from hand and add to discard pile."""
+        for c in cards_to_play:
+            if c in self.hand:
+                self.hand.remove(c)
+                self.deck.discards.append(c)
+    
+    def regen_grit_from_play(self, played_cards: list[Card]) -> int:
+        """Calculate Grit change. High cards cost grit, low cards regen it."""
+        # Rule: Only calculate based on the PRIMARY card (highest value) or sum?
+        # User said: "6-Card played = grit". 
+        # Logic: We sum the grit impact of the played cards.
+        
+        net_change = 0
+        for c in played_cards:
+            cost = c.get_grit_cost()
+            regen = c.get_grit_regen()
+            
+            if cost > 0:
+                net_change -= cost
+            else:
+                net_change += regen
+        
+        before = self.grit
+        self.grit = max(0, min(self.max_grit, self.grit + net_change))
+        return self.grit - before
+
+    def get_finisher_threshold(self, opponent_hp_pct: float) -> int:
+        """
+        Starts at 15 (Double 10s req).
+        Lowers by 1 for every ~10% HP lost.
+        At 0% HP, threshold is ~6.
+        """
+        # Linear interpolation
+        # 1.0 HP -> 15
+        # 0.0 HP -> 6
+        base = 6 + int(9 * opponent_hp_pct)
+        return max(6, min(15, base))
+
+    # --- Standard State Helpers ---
+    def set_state(self, new_state: WrestlerState) -> None:
+        self.state = new_state
+
+    def is_in_grapple(self) -> bool:
+        return self.state in {WrestlerState.GRAPPLE_WEAK, WrestlerState.GRAPPLE_STRONG, WrestlerState.GRAPPLE_BACK}
+
+    def clear_grapple(self) -> None:
+        self.grapple_role = None
+        if self.is_in_grapple():
+            self.state = WrestlerState.STANDING
+
+    def take_damage(self, amount: int) -> int:
+        amount = max(0, int(amount))
+        self.hp = max(0, self.hp - amount)
+        return amount
+3. Update: main.py
+This is a partial file to replace your UI class. Since main.py is huge, I will focus on the UI Build and the Execute Turn method. You can paste this logic into your existing class structure.
+
+Key Changes:
+
+_build_ui: Creates the 5-card Hand display at the bottom.
+
+_player_take_turn: Handles the Move Selection -> Card Selection -> Commit flow.
+
+_resolve_clash: The new engine. Compares Player Cards vs CPU Cards.
+
+Python
+    # -------------------------------------------------------------------------
+    # COPY THIS INTO YOUR TacticalWrestlingApp CLASS
+    # -------------------------------------------------------------------------
+
+    # --- UI BUILDING ---
+    def _build_ui(self) -> None:
+        self.root.configure(bg="#101010")
+        
+        # 1. HUD (Top Bars) - KEEP YOUR EXISTING HUD CODE HERE
+        # (It was good, no need to change except adding Strength maybe)
+        self.hud = tk.Frame(self.root, bg="#1b1b1b")
+        self.hud.pack(fill="x", padx=8, pady=8)
+        # ... (Your existing HUD bars code) ...
+
+        # 2. CENTER AREA (Log & Move Selector)
+        self.center_frame = tk.Frame(self.root, bg="#101010")
+        self.center_frame.pack(fill="both", expand=True, padx=8)
+
+        # Log
+        self.log_text = tk.Text(self.center_frame, height=8, bg="#000", fg="#fff", state="disabled")
+        self.log_text.pack(fill="x", pady=(0, 10))
+
+        # Move Selector (Listbox instead of Grid)
+        self.move_list_frame = tk.Frame(self.center_frame, bg="#101010")
+        self.move_list_frame.pack(fill="both", expand=True)
+        
+        self.move_listbox = tk.Listbox(self.move_list_frame, bg="#222", fg="#fff", font=("Arial", 12))
+        self.move_listbox.pack(side="left", fill="both", expand=True)
+        self.move_listbox.bind("<<ListboxSelect>>", self._on_move_selected)
+
+        # 3. BOTTOM AREA (The Hand)
+        self.hand_frame = tk.Frame(self.root, bg="#000", height=120)
+        self.hand_frame.pack(fill="x", side="bottom", padx=8, pady=8)
+        self.hand_frame.pack_propagate(False) # Force height
+
+        # Create 5 card widgets
+        self.card_widgets = []
+        for i in range(5):
+            f = tk.Frame(self.hand_frame, bg="#000", width=70, height=100)
+            f.pack(side="left", padx=4, fill="y", expand=True)
+            f.bind("<Button-1>", lambda e, idx=i: self._on_card_click(idx))
+            
+            # The inner colored rectangle
+            lbl = tk.Label(f, text="?", font=("Impact", 18), bg="#333", fg="#fff", relief="flat")
+            lbl.place(x=2, y=2, relwidth=0.9, relheight=0.9)
+            lbl.bind("<Button-1>", lambda e, idx=i: self._on_card_click(idx))
+            
+            self.card_widgets.append({"frame": f, "label": lbl, "selected": False})
+        
+        # "COMMIT" Button (To confirm card selection)
+        self.commit_btn = tk.Button(self.hand_frame, text="PLAY", bg="#44ff44", command=self._commit_turn, state="disabled")
+        self.commit_btn.pack(side="right", fill="y", padx=4)
+
+    # --- LOGIC FLOW ---
+
+    def _refresh_hand_ui(self):
+        # Update the visual cards based on self.player.hand
+        for i, widget in enumerate(self.card_widgets):
+            if i < len(self.player.hand):
+                card = self.player.hand[i]
+                color_hex = HEX_COLORS.get(card.color, "#777")
+                
+                # Visual logic: If selected, show white border. Else, colored border.
+                border = "#ffffff" if widget["selected"] else color_hex
+                bg = "#222"
+                
+                widget["frame"].config(bg=border) # The frame acts as the border
+                widget["label"].config(text=str(card.value), bg="#333", fg=color_hex)
+            else:
+                # Empty slot
+                widget["frame"].config(bg="#000")
+                widget["label"].config(text="", bg="#000")
+
+    def _on_move_selected(self, event):
+        if self.turn != "player": return
+        # Get selected move
+        sel = self.move_listbox.curselection()
+        if not sel: return
+        self.selected_move_name = self.move_listbox.get(sel[0])
+        self._log(f"Selected: {self.selected_move_name}. Now pick a card.")
+        
+        # Highlight matching cards? (Optional polish)
+        
+    def _on_card_click(self, index):
+        if self.turn != "player": return
+        if index >= len(self.player.hand): return
+        
+        # Toggle selection
+        w = self.card_widgets[index]
+        w["selected"] = not w["selected"]
+        
+        # Validation: Can only select 2 if they are doubles
+        selected_indices = [i for i, x in enumerate(self.card_widgets) if x["selected"]]
+        if len(selected_indices) > 2:
+            w["selected"] = False # Undo
+            self._log("Max 2 cards!")
+        elif len(selected_indices) == 2:
+            c1 = self.player.hand[selected_indices[0]]
+            c2 = self.player.hand[selected_indices[1]]
+            if c1.value != c2.value:
+                w["selected"] = False
+                self._log("Doubles must match value!")
+
+        # Check Grit Cost
+        # ... (Add logic here to disable Commit if grit too low) ...
+
+        self._refresh_hand_ui()
+        
+        # Enable commit button if move and card selected
+        has_move = hasattr(self, "selected_move_name") and self.selected_move_name
+        has_card = any(x["selected"] for x in self.card_widgets)
+        
+        if has_move and has_card:
+            self.commit_btn.config(state="normal")
+        else:
+            self.commit_btn.config(state="disabled")
+
+    def _commit_turn(self):
+        # 1. Get Player Choices
+        p_cards = [self.player.hand[i] for i, x in enumerate(self.card_widgets) if x["selected"]]
+        p_move = self.selected_move_name
+        
+        # 2. CPU Choices (AI)
+        c_move = self._cpu_choose_move() # Existing AI or random
+        # AI Card Logic:
+        # If CPU has doubles, play them 20% of time.
+        # Else play highest card available.
+        c_cards = [self.cpu.hand[-1]] # Simple AI: Plays highest card (sorted list)
+        
+        # 3. Resolve
+        self._resolve_clash(p_move, p_cards, c_move, c_cards)
+
+    def _resolve_clash(self, p_move_name, p_cards, c_move_name, c_cards):
+        # Calculate Totals
+        def calc_score(wrestler, move_name, cards):
+            base_val = sum(c.value for c in cards)
+            
+            # Doubles Bonus
+            if len(cards) == 2:
+                base_val += 5
+            
+            # Color Bonus
+            move_type = MOVES[move_name]["type"]
+            for c in cards:
+                base_val += c.bonus_for_move_type(move_type)
+                
+            return base_val
+
+        p_score = calc_score(self.player, p_move_name, p_cards)
+        c_score = calc_score(self.cpu, c_move_name, c_cards)
+
+        self._log(f"YOU: {p_score} vs CPU: {c_score}")
+
+        if p_score > c_score:
+            winner = self.player
+            loser = self.cpu
+            move = p_move_name
+            w_cards = p_cards
+            l_cards = c_cards
+            self._log("YOU WIN THE CLASH!")
+        elif c_score > p_score:
+            winner = self.cpu
+            loser = self.player
+            move = c_move_name
+            w_cards = c_cards
+            l_cards = p_cards
+            self._log("CPU WINS THE CLASH!")
+        else:
+            self._log("TIE! Faceoff!")
+            # Trigger Lockup Minigame (Push/Hold)
+            # Winner of minigame gets to execute their move
+            return 
+
+        # Execute Move
+        self._execute_move(attacker=winner, defender=loser, move_name=move)
+        
+        # Resource Phase
+        # Winner spends/regens grit
+        winner.regen_grit_from_play(w_cards)
+        winner.play_cards(w_cards) # Discard
+        winner.draw_to_full()
+        
+        # Loser just discards and draws (Move failed)
+        loser.play_cards(l_cards)
+        loser.draw_to_full()
+        
+        # Reset UI
+        for w in self.card_widgets: w["selected"] = False
+        self._refresh_hand_ui()
+        self.commit_btn.config(state="disabled")
+        self._update_hud()
+Next Step
+This gives you the engine and the UI structure. The main missing piece is the Submission Loop (the "3 chances" mechanic).
+
+When you are ready to tackle that, we can write a _submission_minigame function that uses the new Deck but pauses the draw_to_full logic until the loop ends.
