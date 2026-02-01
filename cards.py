@@ -26,8 +26,8 @@ class Card:
     uid: int = field(default_factory=lambda: random.randint(0, 1_000_000))
 
     def grit_cost(self) -> int:
-        """Cards 6-10 cost a flat 2 grit each. Cards 1-5 cost 0."""
-        return 0 if self.value <= 5 else 2
+        """Cards 6-10 cost a flat 1 grit each. Cards 1-5 cost 0."""
+        return 0 if self.value <= 5 else 1
 
     def grit_regen(self) -> int:
         """Cards 1-5 regen +1 grit each (cap handled by Wrestler). Cards 6-10 regen 0."""

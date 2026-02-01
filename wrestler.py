@@ -19,6 +19,7 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
     "Rest",
     # In-grapple
     "Fight For Control",
+    "Shove Off",
     "Snap Suplex",
     "DDT",
     "Powerbomb",

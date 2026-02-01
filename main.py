@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import re
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -87,25 +88,49 @@ class TacticalWrestlingApp:
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure("TProgressbar", troughcolor="#2a2a2a", background="#3aa655")
+        # Progress bar styles
+        style.configure("TProgressbar", troughcolor="#2a2a2a", background=COLOR_DMG)
         # ttk resolves style names as 'Horizontal.<style>' for horizontal progressbars.
-        try:
-            style.layout("Horizontal.Hype.TProgressbar", style.layout("Horizontal.TProgressbar"))
-        except tk.TclError:
-            pass
-        style.configure("Horizontal.Hype.TProgressbar", troughcolor="#2a2a2a", background="#ffd166")
+        for name in ("Horizontal.Grit.TProgressbar", "Horizontal.Hype.TProgressbar"):
+            try:
+                style.layout(name, style.layout("Horizontal.TProgressbar"))
+            except tk.TclError:
+                pass
+        style.configure("Horizontal.Grit.TProgressbar", troughcolor="#2a2a2a", background=COLOR_GRIT)
+        style.configure("Horizontal.Hype.TProgressbar", troughcolor="#2a2a2a", background=COLOR_HYPE)
 
         self.hud = tk.Frame(self.root, bg="#1b1b1b")
         self.hud.pack(fill="x", padx=8, pady=8)
 
+        hud_top = tk.Frame(self.hud, bg="#1b1b1b")
+        hud_top.pack(fill="x", pady=(4, 8))
+
+        # System button lives in the HUD so it never overlaps cards.
+        self.sys_btn = tk.Button(
+            hud_top,
+            text="S",
+            width=2,
+            height=1,
+            font=("Arial", 9, "bold"),
+            bg="#222",
+            fg="#f2f2f2",
+            activebackground="#333",
+            activeforeground="#fff",
+            bd=1,
+            relief="raised",
+            command=self._open_system_menu,
+        )
+        self.sys_btn.pack(side="right", padx=(6, 0))
+
         self.state_line = tk.Label(
-            self.hud,
+            hud_top,
             text="",
             font=("Arial", 11, "bold"),
             fg="#f2f2f2",
             bg="#1b1b1b",
+            anchor="w",
         )
-        self.state_line.pack(fill="x", pady=(4, 8))
+        self.state_line.pack(side="left", fill="x", expand=True)
 
         # Bars (use grid so both sides stay centered/aligned)
         bars = tk.Frame(self.hud, bg="#1b1b1b")
@@ -119,7 +144,7 @@ class TacticalWrestlingApp:
         tk.Label(left, text="YOU", fg="#67ff8a", bg="#1b1b1b", font=("Impact", 10)).pack(anchor="w")
         self.p_hp = ttk.Progressbar(left, maximum=MAX_HEALTH)
         self.p_hp.pack(fill="x")
-        self.p_grit = ttk.Progressbar(left, maximum=self.player.max_grit)
+        self.p_grit = ttk.Progressbar(left, maximum=self.player.max_grit, style="Horizontal.Grit.TProgressbar")
         self.p_grit.pack(fill="x", pady=(4, 0))
         self.p_hype = ttk.Progressbar(left, maximum=100, style="Horizontal.Hype.TProgressbar")
         self.p_hype.pack(fill="x", pady=(4, 0))
@@ -134,7 +159,7 @@ class TacticalWrestlingApp:
         tk.Label(right, text="CPU", fg="#ff6b6b", bg="#1b1b1b", font=("Impact", 10)).pack(anchor="e")
         self.c_hp = ttk.Progressbar(right, maximum=MAX_HEALTH)
         self.c_hp.pack(fill="x")
-        self.c_grit = ttk.Progressbar(right, maximum=self.cpu.max_grit)
+        self.c_grit = ttk.Progressbar(right, maximum=self.cpu.max_grit, style="Horizontal.Grit.TProgressbar")
         self.c_grit.pack(fill="x", pady=(4, 0))
         self.c_hype = ttk.Progressbar(right, maximum=100, style="Horizontal.Hype.TProgressbar")
         self.c_hype.pack(fill="x", pady=(4, 0))
@@ -262,8 +287,9 @@ class TacticalWrestlingApp:
         self.modal_canvas.bind("<B1-Motion>", lambda e: self.modal_canvas.scan_dragto(e.x, e.y, 1))
 
         self.moves_grid = tk.Frame(self.moves_canvas, bg="#101010")
-        self.moves_grid.columnconfigure(0, weight=1)
-        self.moves_grid.columnconfigure(1, weight=1)
+        # 3-column layout to keep tiles smaller.
+        for col in range(3):
+            self.moves_grid.columnconfigure(col, weight=1)
         self._moves_window_id = self.moves_canvas.create_window((0, 0), window=self.moves_grid, anchor="nw")
 
         def on_grid_configure(_e: tk.Event) -> None:
@@ -285,53 +311,56 @@ class TacticalWrestlingApp:
         self.moves_canvas.bind("<B1-Motion>", lambda e: self.moves_canvas.scan_dragto(e.x, e.y, 1))
 
         # ------------------------------------------------------------------
-        # Hand (Phase 2 card engine)
+        # Control Bar (bottom): RETURN + PLAY (prevents overflow).
+        # NOTE: Pack this BEFORE the hand so the hand is the true bottom-most.
+        # ------------------------------------------------------------------
+        self.control_bar = tk.Frame(self.root, bg="#000", bd=2, relief="ridge")
+        self.control_bar.pack(fill="x", side="bottom", padx=8, pady=(0, 8))
+
+        self.return_btn = tk.Button(
+            self.control_bar,
+            text="< RETURN",
+            font=("Arial", 10, "bold"),
+            bg=COLOR_GRIT,
+            fg="#000",
+            activebackground="#d0b0ff",
+            activeforeground="#000",
+            command=self._on_return_pressed,
+        )
+        self.return_btn.pack(side="left", padx=6, pady=6)
+
+        self.hand_hint = tk.Label(
+            self.control_bar,
+            text="Pick a move.",
+            fg="#aaa",
+            bg="#000",
+            font=("Arial", 9, "bold"),
+            anchor="w",
+        )
+        self.hand_hint.pack(side="left", fill="x", expand=True, padx=(8, 8))
+
+        self.play_btn = tk.Button(
+            self.control_bar,
+            text="PLAY",
+            font=("Arial", 10, "bold"),
+            bg="#44ff44",
+            fg="#000",
+            activebackground="#66ff66",
+            activeforeground="#000",
+            command=self._submit_cards,
+            state="disabled",
+        )
+        self.play_btn.pack(side="right", padx=6, pady=6)
+
+        # ------------------------------------------------------------------
+        # Hand (bottom): contains ONLY the 5 cards.
         # ------------------------------------------------------------------
         self.hand_frame = tk.Frame(self.root, bg="#000", height=self._hand_h_collapsed, bd=2, relief="ridge")
-        # Pack early so it's always visible.
         self.hand_frame.pack(fill="x", side="bottom", padx=8, pady=(0, self._safe_bottom))
         self.hand_frame.pack_propagate(False)
 
-        top_row = tk.Frame(self.hand_frame, bg="#000")
-        top_row.pack(fill="x")
-
-        # Small system button for restart/menu.
-        # Pack it into the hand header (not place/overlay) so it can't cover cards on mobile.
-        self.sys_btn = tk.Button(
-            top_row,
-            text="S",
-            width=2,
-            height=1,
-            font=("Arial", 9, "bold"),
-            bg="#222",
-            fg="#f2f2f2",
-            activebackground="#333",
-            activeforeground="#fff",
-            bd=1,
-            relief="raised",
-            command=self._open_system_menu,
-        )
-        self.sys_btn.pack(side="left", padx=(6, 4), pady=6)
-
-        self.hand_hint = tk.Label(
-            top_row,
-            text="Pick a move above.",
-            fg="#aaa",
-            bg="#000",
-            font=("Arial", 9, "bold"),
-        )
-        self.hand_hint.pack(side="left")
-        self.deck_label = tk.Label(
-            top_row,
-            text="",
-            fg="#aaa",
-            bg="#000",
-            font=("Arial", 9),
-        )
-        self.deck_label.pack(side="right")
-
         self.cards_row = tk.Frame(self.hand_frame, bg="#000")
-        self.cards_row.pack(fill="x", expand=True)
+        self.cards_row.pack(fill="both", expand=True)
 
         self.card_widgets: list[dict] = []
         for i in range(5):
@@ -343,27 +372,81 @@ class TacticalWrestlingApp:
             lbl.bind("<Button-1>", lambda _e, idx=i: self._on_card_click(idx))
             self.card_widgets.append({"frame": border, "label": lbl, "selected": False})
 
-        self.submit_btn = tk.Button(
-            top_row,
-            text="SUBMIT",
-            font=("Arial", 10, "bold"),
-            bg="#44ff44",
-            fg="#000",
-            activebackground="#66ff66",
-            activeforeground="#000",
-            command=self._submit_cards,
-            state="disabled",
-        )
-        # Only shown while selecting cards.
-        self.submit_btn.pack_forget()
-
-        # Pack center AFTER the hand so the hand can't be pushed off-screen.
+        # Pack center AFTER the bottom bars so they can't be pushed off-screen.
         self.center_frame.pack(fill="both", expand=True, padx=8, pady=8)
-
-        # Now pack the moves frame so it uses the remaining space above the hand.
         self.moves_frame.pack(fill="both", expand=True, pady=(0, 8))
 
-        # (sys button is packed into the hand header above)
+        # Initial control bar state.
+        self._update_control_bar()
+
+    def _on_return_pressed(self) -> None:
+        if self.game_over:
+            return
+        if self._escape_mode is not None:
+            return
+
+        if self._menu_stage == "MOVES":
+            self.selected_move_name = None
+            self._selected_card_idxs = set()
+            self._set_hand_selecting(False)
+            self._set_menu_stage("CATEGORIES", category=None)
+            self._refresh_player_buttons()
+            self._update_control_bar()
+
+    def _update_control_bar(self) -> None:
+        # Return only when a category is selected.
+        show_return = bool(self._menu_stage == "MOVES" and self._selected_category)
+        try:
+            if show_return:
+                if not self.return_btn.winfo_ismapped():
+                    self.return_btn.pack(side="left", padx=6, pady=6)
+            else:
+                if self.return_btn.winfo_ismapped():
+                    self.return_btn.pack_forget()
+        except tk.TclError:
+            pass
+
+        # PLAY button state and cost display.
+        enabled = False
+        move_name = str(self.selected_move_name or "")
+        selected_count = int(len(self._selected_card_idxs))
+
+        cards = self._selected_player_cards()
+        if move_name:
+            if move_name == "Defensive":
+                enabled = self._hand_selecting and (selected_count in {0, 1, 2})
+            else:
+                enabled = self._hand_selecting and (selected_count in {1, 2}) and bool(cards)
+
+        move_cost = int(MOVES.get(move_name, {}).get("cost", 0)) if move_name else 0
+        ignore_card_cost = (move_name == "Rest")
+        card_cost = 0 if ignore_card_cost else sum(int(c.grit_cost()) for c in (cards or []))
+        total_cost = int(move_cost) + int(card_cost)
+        if enabled and int(self.player.grit) < total_cost:
+            enabled = False
+
+        btn_text = "PLAY"
+        if move_name:
+            btn_text = f"PLAY\n({total_cost} Grit)"
+        try:
+            self.play_btn.config(text=btn_text, state=("normal" if enabled else "disabled"))
+        except tk.TclError:
+            pass
+
+        # Hint copy: keep it short and mobile-friendly.
+        hint = "Pick a move."
+        if self._escape_mode is not None and bool(self._escape_mode.get("defender_is_player")):
+            hint = "ESCAPE: tap 3 cards to discard."
+        elif not move_name:
+            hint = "Pick a move above."
+        elif not self._hand_selecting:
+            hint = "Pick a move above."
+        else:
+            hint = "Select card(s). Cost = move + card grit."
+        try:
+            self.hand_hint.config(text=hint)
+        except tk.TclError:
+            pass
 
     def _schedule(self, ms: int, func) -> None:
         """Schedule a callback and keep track so restart can cancel it."""
@@ -615,7 +698,7 @@ class TacticalWrestlingApp:
 
         # Disadvantaged wrestlers cannot pick offensive grapple/power options.
         if user_dis:
-            if move_name not in {"Fight For Control", "Defensive", "Rest"}:
+            if move_name not in {"Fight For Control", "Defensive", "Rest", "Shove Off"}:
                 return False
 
         # Defensive is only usable in neutral standing or while disadvantaged.
@@ -635,6 +718,7 @@ class TacticalWrestlingApp:
             "Rest",
             "Taunt",
             "Lock Up",
+            "Shove Off",
             "Slow Stand Up",
             "Kip-up",
             "Climb Down",
@@ -715,6 +799,7 @@ class TacticalWrestlingApp:
         self._menu_stage = str(stage)
         self._selected_category = category
         self._update_move_list_ui()
+        self._update_control_bar()
 
     def _category_has_moves(self, category: str) -> bool:
         moves = self._available_moves(self.player, self.cpu)
@@ -730,7 +815,15 @@ class TacticalWrestlingApp:
 
     def _make_move_tile(self, parent: tk.Widget, *, move_name: str, move: dict, disabled: bool, finisher: bool) -> tk.Frame:
         outer = tk.Frame(parent, bg=("#d4af37" if finisher else "#222"), bd=2, relief="flat")
-        inner_bg = "#1f1f1f" if not disabled else "#121212"
+        mtype = str(move.get("type", "Setup"))
+        if mtype == "Strike":
+            base_bg = "#3a0000"
+        elif mtype in {"Grapple", "Submission", "Pin"}:
+            base_bg = "#00003a"
+        else:
+            base_bg = "#1f1f1f"
+
+        inner_bg = base_bg if not disabled else "#121212"
         inner = tk.Frame(outer, bg=inner_bg)
         inner.pack(fill="both", expand=True)
 
@@ -745,7 +838,7 @@ class TacticalWrestlingApp:
         tk.Button(
             inner,
             text=move_name,
-            font=("Arial", 10, "bold"),
+            font=("Arial", 9, "bold"),
             bg=inner_bg,
             fg=name_fg,
             activebackground="#333",
@@ -755,7 +848,7 @@ class TacticalWrestlingApp:
             command=on_pick,
             state=("disabled" if disabled else "normal"),
             disabledforeground="#666",
-        ).pack(fill="x", padx=6, pady=(6, 2))
+        ).pack(fill="x", padx=6, pady=(5, 2))
 
         dmg = int(move.get("damage", 0))
         cost = int(move.get("cost", 0))
@@ -765,7 +858,7 @@ class TacticalWrestlingApp:
         stats.pack(fill="x", padx=6, pady=(0, 6))
 
         def lbl(text: str, fg: str = "#aaa") -> tk.Label:
-            return tk.Label(stats, text=text, fg=("#666" if disabled else fg), bg=inner_bg, font=("Arial", 9, "bold"))
+            return tk.Label(stats, text=text, fg=("#666" if disabled else fg), bg=inner_bg, font=("Arial", 8, "bold"))
 
         lbl("").pack(side="left")
         lbl(str(dmg), fg=COLOR_DMG).pack(side="left")
@@ -804,7 +897,7 @@ class TacticalWrestlingApp:
                 fg="#f2f2f2",
                 bg="#101010",
                 font=("Arial", 14, "bold"),
-            ).grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=(6, 2))
+            ).grid(row=0, column=0, columnspan=3, sticky="w", padx=6, pady=(6, 2))
 
             tk.Label(
                 self.moves_grid,
@@ -812,7 +905,7 @@ class TacticalWrestlingApp:
                 fg="#aaa",
                 bg="#101010",
                 font=("Arial", 11, "bold"),
-            ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
+            ).grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
 
             tk.Label(
                 self.moves_grid,
@@ -822,7 +915,7 @@ class TacticalWrestlingApp:
                 font=("Arial", 10),
                 wraplength=420,
                 justify="left",
-            ).grid(row=2, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
+            ).grid(row=2, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
             return
 
         # Stage 1: category menu
@@ -851,12 +944,12 @@ class TacticalWrestlingApp:
                     else:
                         self._set_menu_stage("MOVES", category=k)
 
-                r, c = divmod(idx, 2)
+                r, c = divmod(idx, 3)
                 btn = tk.Button(
                     self.moves_grid,
                     text=f"[{label}]",
-                    height=3,
-                    font=("Arial", 12, "bold"),
+                    height=2,
+                    font=("Arial", 11, "bold"),
                     bg="#2f2f2f",
                     fg="#f2f2f2",
                     disabledforeground="#666",
@@ -871,7 +964,7 @@ class TacticalWrestlingApp:
         # Stage: Hype Shop
         if self._menu_stage == "HYPE_SHOP":
             ttk.Button(self.moves_grid, text="RETURN", command=lambda: self._set_menu_stage("CATEGORIES"))\
-                .grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=(6, 10))
+                .grid(row=0, column=0, columnspan=3, sticky="ew", padx=6, pady=(6, 10))
 
             tk.Label(
                 self.moves_grid,
@@ -879,7 +972,7 @@ class TacticalWrestlingApp:
                 fg=COLOR_HYPE,
                 bg="#101010",
                 font=("Arial", 12, "bold"),
-            ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6)
+            ).grid(row=1, column=0, columnspan=3, sticky="w", padx=6)
 
             def buy_pump() -> None:
                 if self.player.hype < 25:
@@ -919,19 +1012,13 @@ class TacticalWrestlingApp:
             if self.player.hype < 80:
                 b3.config(state="disabled")
 
-            b1.grid(row=2, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
-            b2.grid(row=3, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
-            b3.grid(row=4, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
+            b1.grid(row=2, column=0, columnspan=3, sticky="ew", padx=6, pady=6)
+            b2.grid(row=3, column=0, columnspan=3, sticky="ew", padx=6, pady=6)
+            b3.grid(row=4, column=0, columnspan=3, sticky="ew", padx=6, pady=6)
             return
 
         # Stage 2: moves within a category
         if self._menu_stage == "MOVES":
-            ttk.Button(
-                self.moves_grid,
-                text="RETURN",
-                command=lambda: self._set_menu_stage("CATEGORIES"),
-            ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=(6, 10))
-
             cat = str(self._selected_category or "UTILITY")
             avail = self._available_moves(self.player, self.cpu)
             if not avail:
@@ -966,8 +1053,8 @@ class TacticalWrestlingApp:
                     disabled = True
 
                 tile = self._make_move_tile(self.moves_grid, move_name=name, move=mv, disabled=disabled, finisher=finisher)
-                r, c = divmod(idx + 2, 2)
-                tile.grid(row=r, column=c, sticky="nsew", padx=6, pady=6)
+                r, c = divmod(idx, 3)
+                tile.grid(row=r, column=c, sticky="nsew", padx=4, pady=4)
             return
 
     def _refresh_player_buttons(self) -> None:
@@ -988,43 +1075,17 @@ class TacticalWrestlingApp:
                 self.hand_frame.config(height=self._hand_h_expanded)
             except tk.TclError:
                 pass
-
-            # Escape loop is tap-to-discard; don't show SUBMIT.
-            if self._escape_mode is None:
-                if not self.submit_btn.winfo_ismapped():
-                    try:
-                        self.deck_label.pack_forget()
-                    except tk.TclError:
-                        pass
-                    self.submit_btn.pack(side="right", padx=6, pady=6)
-                    try:
-                        self.deck_label.pack(side="right")
-                    except tk.TclError:
-                        pass
         else:
             try:
                 self.hand_frame.config(height=self._hand_h_collapsed)
             except tk.TclError:
                 pass
-            try:
-                self.submit_btn.pack_forget()
-            except tk.TclError:
-                pass
-            # Ensure deck label is visible on the right.
-            try:
-                if not self.deck_label.winfo_ismapped():
-                    self.deck_label.pack(side="right")
-            except tk.TclError:
-                pass
             self._selected_card_idxs = set()
             for w in getattr(self, "card_widgets", []):
                 w["selected"] = False
-            try:
-                self.submit_btn.config(state="disabled")
-            except tk.TclError:
-                pass
 
         self._refresh_hand_ui()
+        self._update_control_bar()
 
     def _refresh_hand_ui(self) -> None:
         # Defensive: ensure the hand is populated before rendering.
@@ -1049,18 +1110,7 @@ class TacticalWrestlingApp:
                 frame.config(bg="#000")
                 label.config(text="", bg="#000")
 
-        try:
-            self.deck_label.config(
-                text=(
-                    f"Deck: {self.player.deck_remaining()}"
-                    f"  |  Str: {self.player.strength_current()}/{self.player.strength_max()}"
-                    f"  |  Grit: {self.player.grit}/{self.player.max_grit}"
-                )
-            )
-        except tk.TclError:
-            pass
-
-        self._update_submit_state()
+        self._update_control_bar()
 
     def _select_move(self, move_name: str) -> None:
         if self.game_over:
@@ -1141,7 +1191,13 @@ class TacticalWrestlingApp:
                 ),
             )
         else:
-            self._set_hand_selecting(True, hint=f"Pick 1 card (or doubles) for {move_name}.")
+            self._set_hand_selecting(
+                True,
+                hint=(
+                    f"Pick 1 card (or doubles) for {move_name}. "
+                    "Grit cost = Move cost + Card cost."
+                ),
+            )
         self._refresh_player_buttons()
 
     def _on_card_click(self, index: int) -> None:
@@ -1189,24 +1245,8 @@ class TacticalWrestlingApp:
         self._refresh_hand_ui()
 
     def _update_submit_state(self) -> None:
-        # Hidden button doesn't need state updates.
-        if not self.submit_btn.winfo_ismapped():
-            return
-
-        if self.selected_move_name == "Defensive":
-            enabled = bool(self.selected_move_name) and (len(self._selected_card_idxs) in {0, 1, 2})
-        else:
-            enabled = bool(self.selected_move_name) and (len(self._selected_card_idxs) in {1, 2})
-
-        cards = self._selected_player_cards()
-        if enabled:
-            move_cost = int(MOVES.get(self.selected_move_name or "", {}).get("cost", 0))
-            ignore_card_cost = (self.selected_move_name == "Rest")
-            card_cost = 0 if ignore_card_cost else sum(int(c.grit_cost()) for c in (cards or []))
-            if int(self.player.grit) < int(move_cost) + int(card_cost):
-                enabled = False
-
-        self.submit_btn.config(state=("normal" if enabled else "disabled"))
+        # Back-compat shim: older code paths still call this.
+        self._update_control_bar()
 
     def _selected_player_cards(self) -> list:
         hand = list(self.player.hand or [])
@@ -1418,11 +1458,13 @@ class TacticalWrestlingApp:
         if winner is None:
             # Tie (Double Down) or both Defensive.
             if (p_move != "Defensive") and (c_move != "Defensive") and (p_score == c_score):
-                self._log("DOUBLE DOWN! Both fighters collide and take 5 damage.")
+                self._log("DOUBLE DOWN! Both crash into the mat — 5 damage each. Both are GROUNDED.")
                 self.player.take_damage(5)
                 self.cpu.take_damage(5)
                 self.player.clear_grapple()
                 self.cpu.clear_grapple()
+                self.player.set_state(WrestlerState.GROUNDED)
+                self.cpu.set_state(WrestlerState.GROUNDED)
         else:
             if p_move == "Defensive" and winner is self.cpu:
                 pool = sum(int(c.value) for c in (p_cards or []))
@@ -1473,6 +1515,17 @@ class TacticalWrestlingApp:
                         suppress_state_changes=bool(suppress_states),
                     )
             else:
+                loser_move = c_move if winner is self.player else p_move
+                loser_type = str(MOVES.get(loser_move, {}).get("type", "Setup"))
+                if str(w_move) in {"Taunt", "Rest"} and loser_type not in {"Setup", "Defensive"}:
+                    self._log_parts(
+                        [
+                            (winner.name, "you" if winner.is_player else "cpu"),
+                            (" dodges effortlessly while ", "sys"),
+                            (loser.name, "you" if loser.is_player else "cpu"),
+                            (" wastes the beat.", "sys"),
+                        ]
+                    )
                 self._execute_move(attacker=winner, defender=loser, move_name=w_move, allow_reaction=False, clash_score=w_score)
 
         # If the resolved move triggered an escape attempt, freeze here and let
@@ -1994,6 +2047,38 @@ class TacticalWrestlingApp:
             base = min(1.0, base + 0.20)
         return max(0.0, min(1.0, base))
 
+    def _render_flavor_text(self, text: str, *, attacker: Wrestler, defender: Wrestler) -> str:
+        """Best-effort POV fixups for move flavor text.
+
+        Moves DB mixes 2nd-person ("You") and 3rd-person ("They").
+        This normalizes to the correct POV for the log.
+        """
+        if not text:
+            return ""
+
+        attacker_ref = "You" if attacker.is_player else attacker.name
+        attacker_poss = "your" if attacker.is_player else f"{attacker.name}'s"
+        defender_ref = "you" if defender.is_player else defender.name
+        defender_ref_cap = "You" if defender.is_player else defender.name
+        defender_poss = "your" if defender.is_player else f"{defender.name}'s"
+
+        # Attacker placeholders.
+        out = str(text)
+        out = out.replace("You're", f"{attacker_ref} are")
+        out = out.replace("You", attacker_ref)
+        out = out.replace("Your", attacker_poss.capitalize())
+        out = out.replace("your", attacker_poss)
+        out = out.replace("They", attacker_ref)
+        out = out.replace("Their", attacker_poss.capitalize())
+
+        # Defender placeholders (most DB text uses them/their to refer to opponent).
+        out = out.replace(" them ", f" {defender_ref} ")
+        out = out.replace(" Them ", f" {defender_ref_cap} ")
+        out = out.replace(" their ", f" {defender_poss} ")
+        out = out.replace(" Their ", f" {defender_poss.capitalize()} ")
+
+        return out
+
     # --- Core move execution ---
     def _execute_move(
         self,
@@ -2028,14 +2113,14 @@ class TacticalWrestlingApp:
                 (" uses ", "sys"),
                 (move_name, "move"),
                 ("! ", "sys"),
-                (str(move.get("flavor_text", "")), "sys"),
+                (self._render_flavor_text(str(move.get("flavor_text", "")), attacker=attacker, defender=defender), "sys"),
             ]
         )
 
         # Utility moves
         if move_name == "Rest":
             before = attacker.grit
-            attacker.grit = min(attacker.max_grit, attacker.grit + 2)
+            attacker.grit = min(attacker.max_grit, attacker.grit + 3)
             self._log_parts(
                 [
                     (attacker.name, attacker_tag),
@@ -2054,6 +2139,18 @@ class TacticalWrestlingApp:
                 self._log_parts([(attacker.name, attacker_tag), (" secures the better position!", "sys")])
             else:
                 self._log_parts([(attacker.name, attacker_tag), (" reaches for control, but there's no tie-up.", "sys")])
+            self._update_hud()
+            return False
+
+        if move_name == "Shove Off":
+            if attacker.is_in_grapple() or defender.is_in_grapple():
+                attacker.clear_grapple()
+                defender.clear_grapple()
+                attacker.set_state(WrestlerState.STANDING)
+                defender.set_state(WrestlerState.STANDING)
+                self._log_parts([(attacker.name, attacker_tag), (" shoves free and resets to neutral!", "sys")])
+            else:
+                self._log_parts([(attacker.name, attacker_tag), (" tries to shove off, but they're not tied up.", "sys")])
             self._update_hud()
             return False
 
