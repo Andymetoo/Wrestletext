@@ -18,7 +18,7 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
     "Taunt",
     "Rest",
     # In-grapple
-    "Chain Wrestle",
+    "Fight For Control",
     "Snap Suplex",
     "DDT",
     "Powerbomb",
@@ -76,8 +76,8 @@ class Wrestler:
 
     hp: int = MAX_HEALTH
     state: WrestlerState = WrestlerState.STANDING
-    grit: int = 5
-    max_grit: int = 10
+    grit: int = 20
+    max_grit: int = 20
 
     # N64-style meters/systems
     hype: int = 0  # 0..100
@@ -114,7 +114,26 @@ class Wrestler:
             self.deck = Deck(self.archetype)
         if self.hand is None:
             self.hand = []
+        # Phase 2: start at full grit.
+        self.grit = int(self.max_grit)
         self.draw_to_full()
+
+    def strength_current(self) -> int:
+        """Total remaining strength in the undealt pile + current hand.
+
+        Excludes discard pile (spent cards).
+        """
+        total = 0
+        if self.deck is not None:
+            total += sum(int(c.value) for c in self.deck.cards)
+        if self.hand is not None:
+            total += sum(int(c.value) for c in self.hand)
+        return int(total)
+
+    def strength_max(self) -> int:
+        if self.deck is None:
+            return 0
+        return int(getattr(self.deck, "max_strength", 0))
 
     def hp_pct(self) -> float:
         return max(0.0, min(1.0, self.hp / MAX_HEALTH))
@@ -165,18 +184,20 @@ class Wrestler:
             return 0
         return self.deck.remaining()
 
-    def can_afford_cards(self, cards: list[Card]) -> bool:
+    def can_afford_cards(self, cards: list[Card], *, ignore_cost: bool = False) -> bool:
+        if ignore_cost:
+            return True
         total_cost = sum(c.grit_cost() for c in cards)
         return self.grit >= total_cost
 
-    def apply_grit_from_cards(self, cards: list[Card]) -> int:
+    def apply_grit_from_cards(self, cards: list[Card], *, ignore_cost: bool = False) -> int:
         """Apply card-driven grit economy.
 
         - Cards 6-10: cost 2 grit each
         - Cards 1-5: regen +1 grit each
         """
         before = self.grit
-        cost = sum(c.grit_cost() for c in cards)
+        cost = 0 if ignore_cost else sum(c.grit_cost() for c in cards)
         regen = sum(c.grit_regen() for c in cards)
         self.grit = max(0, min(self.max_grit, self.grit - cost + regen))
         return self.grit - before

@@ -24,15 +24,27 @@ class TacticalWrestlingApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("WrestleText: State-Based Tactical Simulation")
-        # Keep the bottom Hand visible even on shorter screens.
+        # Responsive sizing: on small/phone-like screens, use full screen size.
+        # Otherwise default to a compact desktop window.
+        self._screen_w = 460
+        self._screen_h = 820
         try:
-            screen_w = int(self.root.winfo_screenwidth())
-            screen_h = int(self.root.winfo_screenheight())
-            w = min(460, max(360, screen_w - 40))
-            h = min(820, max(640, screen_h - 80))
-            self.root.geometry(f"{w}x{h}")
+            self._screen_w = int(self.root.winfo_screenwidth())
+            self._screen_h = int(self.root.winfo_screenheight())
         except tk.TclError:
+            pass
+
+        is_phoneish = (self._screen_w <= 640) or (self._screen_h <= 900) or (self._screen_h / max(1, self._screen_w) > 1.35)
+        if is_phoneish:
+            self.root.geometry(f"{self._screen_w}x{self._screen_h}")
+        else:
             self.root.geometry("460x820")
+
+        # Android wrappers often have a bottom nav bar that overlaps the lowest pixels.
+        # Reserve a small "safe area" so the Hand/SUBMIT can't be covered.
+        self._safe_bottom = max(12, min(72, int(self._screen_h * 0.04)))
+        self._hand_h_collapsed = max(72, min(160, int(self._screen_h * 0.11)))
+        self._hand_h_expanded = max(140, min(280, int(self._screen_h * 0.20)))
 
         self.player = Wrestler("YOU", True)
         self.cpu = Wrestler("CPU", False)
@@ -130,8 +142,9 @@ class TacticalWrestlingApp:
         self.turn_label.pack(fill="x", padx=8)
 
         # Log (always visible)
+        # Center content is packed AFTER the bottom Hand so the Hand always
+        # reserves screen space (pack order matters on some mobile/HiDPI builds).
         self.center_frame = tk.Frame(self.root, bg="#101010")
-        self.center_frame.pack(fill="x", padx=8, pady=8)
 
         # Log (kept small so moves are prominent)
         self.log_frame = tk.Frame(self.center_frame, bg="#000", bd=2, relief="sunken")
@@ -169,7 +182,7 @@ class TacticalWrestlingApp:
         # NOTE: We pack the bottom Hand bar *before* packing this frame.
         # Tk's pack geometry allocates space in pack order; if a big expand=True
         # widget is packed first, later bottom widgets can end up clipped.
-        self.moves_frame = tk.Frame(self.root, bg="#101010")
+        self.moves_frame = tk.Frame(self.center_frame, bg="#101010")
         self.moves_title = tk.Label(
             self.moves_frame,
             text="Moves",
@@ -179,7 +192,8 @@ class TacticalWrestlingApp:
         )
         self.moves_title.pack(anchor="w", pady=(0, 6))
         # Scrollable move area so options never get cut off.
-        self.moves_canvas = tk.Canvas(self.moves_frame, bg="#101010", highlightthickness=0, height=420)
+        # Do not hard-code height; let it flex with the window.
+        self.moves_canvas = tk.Canvas(self.moves_frame, bg="#101010", highlightthickness=0)
         self.moves_scroll = tk.Scrollbar(self.moves_frame, orient="vertical", command=self.moves_canvas.yview)
         self.moves_canvas.configure(yscrollcommand=self.moves_scroll.set)
         self.moves_scroll.pack(side="right", fill="y")
@@ -198,12 +212,42 @@ class TacticalWrestlingApp:
         self.modal_body = tk.Frame(self.modal_frame, bg="#0b0b0b")
         self.modal_body.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
+        # Scrollable modal content so embedded minigames/buttons can't fall below
+        # the visible area on small screens.
+        self.modal_canvas = tk.Canvas(self.modal_body, bg="#0b0b0b", highlightthickness=0)
+        self.modal_scroll = tk.Scrollbar(self.modal_body, orient="vertical", command=self.modal_canvas.yview)
+        self.modal_canvas.configure(yscrollcommand=self.modal_scroll.set)
+        self.modal_scroll.pack(side="right", fill="y")
+        self.modal_canvas.pack(side="left", fill="both", expand=True)
+
         # Inner content area for embedded modals.
-        # Keep it left-anchored and let it fill the Moves panel width.
-        # (We handle off-screen/cropping issues inside mechanics by anchoring
-        # widgets left and respecting the host width.)
-        self.modal_content = tk.Frame(self.modal_body, bg="#0b0b0b")
-        self.modal_content.pack(fill="both", expand=True, anchor="nw")
+        self.modal_content = tk.Frame(self.modal_canvas, bg="#0b0b0b")
+        self._modal_window_id = self.modal_canvas.create_window((0, 0), window=self.modal_content, anchor="nw")
+
+        def on_modal_content_configure(_e: tk.Event) -> None:
+            try:
+                self.modal_canvas.configure(scrollregion=self.modal_canvas.bbox("all"))
+            except tk.TclError:
+                return
+
+        def on_modal_canvas_configure(e: tk.Event) -> None:
+            try:
+                self.modal_canvas.itemconfigure(self._modal_window_id, width=e.width)
+            except tk.TclError:
+                return
+
+        self.modal_content.bind("<Configure>", on_modal_content_configure)
+        self.modal_canvas.bind("<Configure>", on_modal_canvas_configure)
+
+        def on_modal_mousewheel(e: tk.Event) -> None:
+            try:
+                self.modal_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+            except tk.TclError:
+                return
+
+        self.modal_canvas.bind_all("<MouseWheel>", on_modal_mousewheel)
+        self.modal_canvas.bind("<ButtonPress-1>", lambda e: self.modal_canvas.scan_mark(e.x, e.y))
+        self.modal_canvas.bind("<B1-Motion>", lambda e: self.modal_canvas.scan_dragto(e.x, e.y, 1))
 
         self.moves_grid = tk.Frame(self.moves_canvas, bg="#101010")
         self.moves_grid.columnconfigure(0, weight=1)
@@ -231,9 +275,9 @@ class TacticalWrestlingApp:
         # ------------------------------------------------------------------
         # Hand (Phase 2 card engine)
         # ------------------------------------------------------------------
-        self.hand_frame = tk.Frame(self.root, bg="#000", height=72, bd=2, relief="ridge")
+        self.hand_frame = tk.Frame(self.root, bg="#000", height=self._hand_h_collapsed, bd=2, relief="ridge")
         # Pack early so it's always visible.
-        self.hand_frame.pack(fill="x", side="bottom", padx=8, pady=(0, 8))
+        self.hand_frame.pack(fill="x", side="bottom", padx=8, pady=(0, self._safe_bottom))
         self.hand_frame.pack_propagate(False)
 
         top_row = tk.Frame(self.hand_frame, bg="#000")
@@ -282,8 +326,11 @@ class TacticalWrestlingApp:
         # Only shown while selecting cards.
         self.submit_btn.pack_forget()
 
+        # Pack center AFTER the hand so the hand can't be pushed off-screen.
+        self.center_frame.pack(fill="both", expand=True, padx=8, pady=8)
+
         # Now pack the moves frame so it uses the remaining space above the hand.
-        self.moves_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.moves_frame.pack(fill="both", expand=True, pady=(0, 8))
 
         # Small system button (bottom-left) for restart without quitting.
         self.sys_btn = tk.Button(
@@ -300,7 +347,8 @@ class TacticalWrestlingApp:
             relief="raised",
             command=self._open_system_menu,
         )
-        self.sys_btn.place(x=6, y=-6, anchor="sw", relx=0.0, rely=1.0)
+        # Keep it above the phone nav-bar safe area.
+        self.sys_btn.place(x=6, y=-(self._safe_bottom + 6), anchor="sw", relx=0.0, rely=1.0)
 
     def _schedule(self, ms: int, func) -> None:
         """Schedule a callback and keep track so restart can cancel it."""
@@ -389,14 +437,12 @@ class TacticalWrestlingApp:
 
     def _show_modal(self, title: str) -> None:
         self.modal_title.config(text=title)
-        # Some flows previously packed widgets directly into modal_body.
-        # Clear everything except the fixed modal_content container.
-        for w in list(self.modal_body.winfo_children()):
-            if w is self.modal_content:
-                continue
-            w.destroy()
         for w in list(self.modal_content.winfo_children()):
             w.destroy()
+        try:
+            self.modal_canvas.yview_moveto(0.0)
+        except tk.TclError:
+            pass
         # Hide the normal moves list UI.
         try:
             self.moves_title.pack_forget()
@@ -496,8 +542,10 @@ class TacticalWrestlingApp:
         self.p_hype["value"] = self.player.hype
         self.c_hype["value"] = self.cpu.hype
 
-        self.p_nums.config(text=f"HP {self.player.hp}/{MAX_HEALTH}  |  Grit {self.player.grit}/{self.player.max_grit}  |  Hype {self.player.hype}/100")
-        self.c_nums.config(text=f"HP {self.cpu.hp}/{MAX_HEALTH}  |  Grit {self.cpu.grit}/{self.cpu.max_grit}  |  Hype {self.cpu.hype}/100")
+        p_str = f"Str {self.player.strength_current()}/{self.player.strength_max()}"
+        c_str = f"Str {self.cpu.strength_current()}/{self.cpu.strength_max()}"
+        self.p_nums.config(text=f"HP {self.player.hp}/{MAX_HEALTH}  |  Grit {self.player.grit}/{self.player.max_grit}  |  Hype {self.player.hype}/100  |  {p_str}")
+        self.c_nums.config(text=f"HP {self.cpu.hp}/{MAX_HEALTH}  |  Grit {self.cpu.grit}/{self.cpu.max_grit}  |  Hype {self.cpu.hype}/100  |  {c_str}")
 
         self.p_limbs.config(
             text=f"H:{self.player.body_parts['HEAD']}  B:{self.player.body_parts['BODY']}  L:{self.player.body_parts['LEGS']}"
@@ -559,16 +607,7 @@ class TacticalWrestlingApp:
             if self._move_is_legal("Rest", user, target) and self._passes_moveset(user, "Rest"):
                 names.append("Rest")
 
-        # Grapple restrictions: in the WEAK tie-up, the defender mostly fights for control.
-        # (Other grapple tiers will later get dedicated reversals/strikes.)
-        if (
-            user.state == WrestlerState.GRAPPLE_WEAK
-            and target.state == WrestlerState.GRAPPLE_WEAK
-            and user.grapple_role == GrappleRole.DEFENSE
-        ):
-            defensive_names = [n for n in names if n == "Chain Wrestle"]
-            if defensive_names:
-                names = defensive_names
+        # Phase 2: don't hard-restrict defender choices to a single legacy move.
 
         def key(n: str) -> tuple[int, int, str]:
             t = MOVES[n]["type"]
@@ -681,7 +720,7 @@ class TacticalWrestlingApp:
 
         if selecting:
             try:
-                self.hand_frame.config(height=140)
+                self.hand_frame.config(height=self._hand_h_expanded)
             except tk.TclError:
                 pass
             if not self.submit_btn.winfo_ismapped():
@@ -696,7 +735,7 @@ class TacticalWrestlingApp:
                     pass
         else:
             try:
-                self.hand_frame.config(height=64)
+                self.hand_frame.config(height=self._hand_h_collapsed)
             except tk.TclError:
                 pass
             try:
@@ -741,7 +780,13 @@ class TacticalWrestlingApp:
                 label.config(text="", bg="#000")
 
         try:
-            self.deck_label.config(text=f"Deck: {self.player.deck_remaining()}  |  Grit: {self.player.grit}/{self.player.max_grit}")
+            self.deck_label.config(
+                text=(
+                    f"Deck: {self.player.deck_remaining()}"
+                    f"  |  Str: {self.player.strength_current()}/{self.player.strength_max()}"
+                    f"  |  Grit: {self.player.grit}/{self.player.max_grit}"
+                )
+            )
         except tk.TclError:
             pass
 
@@ -760,6 +805,13 @@ class TacticalWrestlingApp:
             self._selected_card_idxs = set()
             self._set_hand_selecting(False)
             self._refresh_player_buttons()
+
+            hand_was_mapped = bool(self.hand_frame.winfo_ismapped())
+            if hand_was_mapped:
+                try:
+                    self.hand_frame.pack_forget()
+                except tk.TclError:
+                    hand_was_mapped = False
             self._show_modal("Lock Up")
             try:
                 player_won = lockup_minigame(
@@ -770,6 +822,11 @@ class TacticalWrestlingApp:
                 )
             finally:
                 self._hide_modal()
+                if hand_was_mapped:
+                    try:
+                        self.hand_frame.pack(fill="x", side="bottom", padx=8, pady=(0, self._safe_bottom))
+                    except tk.TclError:
+                        pass
 
             if bool(player_won):
                 self._log("You win the lock up and take control!")
@@ -844,8 +901,10 @@ class TacticalWrestlingApp:
             enabled = bool(self.selected_move_name) and (len(self._selected_card_idxs) in {1, 2})
 
         cards = self._selected_player_cards()
-        if enabled and cards and (not self.player.can_afford_cards(cards)):
-            enabled = False
+        if enabled and cards:
+            ignore_cost = (self.selected_move_name == "Rest") and (self._survival_mode is None)
+            if not self.player.can_afford_cards(cards, ignore_cost=ignore_cost):
+                enabled = False
 
         self.submit_btn.config(state=("normal" if enabled else "disabled"))
 
@@ -893,9 +952,11 @@ class TacticalWrestlingApp:
         best_cards: list = []
         best_score = -1
 
+        ignore_cost = (move_name == "Rest")
+
         # Singles.
         for c in hand:
-            if self.cpu.can_afford_cards([c]):
+            if self.cpu.can_afford_cards([c], ignore_cost=ignore_cost):
                 s = self._calc_clash_score(move_name, [c])
                 if s > best_score:
                     best_score = s
@@ -908,7 +969,7 @@ class TacticalWrestlingApp:
         for v, cs in by_val.items():
             if len(cs) >= 2:
                 pair = [cs[0], cs[1]]
-                if self.cpu.can_afford_cards(pair):
+                if self.cpu.can_afford_cards(pair, ignore_cost=ignore_cost):
                     s = self._calc_clash_score(move_name, pair)
                     if s > best_score:
                         best_score = s
@@ -935,18 +996,31 @@ class TacticalWrestlingApp:
             self._log("Pick a move first.")
             return
 
+        # Re-validate legality at submit time (states can change between selection
+        # and resolution on some flows like Lock Up / grapple transitions).
+        if not self._move_is_legal(self.selected_move_name, self.player, self.cpu):
+            self._log(f"{self.selected_move_name} is no longer legal. Pick a different move.")
+            self.selected_move_name = None
+            self._selected_card_idxs = set()
+            self._set_hand_selecting(False)
+            self._refresh_player_buttons()
+            return
+
         p_cards = self._selected_player_cards()
         if not p_cards:
             self._log("Select 1 card (or doubles).")
             return
-        if not self.player.can_afford_cards(p_cards):
+
+        ignore_p_cost = (self.selected_move_name == "Rest")
+        if not self.player.can_afford_cards(p_cards, ignore_cost=ignore_p_cost):
             self._log("Not enough grit to play those card(s).")
             return
 
         p_move = str(self.selected_move_name)
         c_move = self._cpu_choose_move()
         c_cards = self._cpu_choose_cards(move_name=c_move)
-        if c_cards and (not self.cpu.can_afford_cards(c_cards)):
+        ignore_c_cost = (c_move == "Rest")
+        if c_cards and (not self.cpu.can_afford_cards(c_cards, ignore_cost=ignore_c_cost)):
             # Should be rare; degrade to single lowest.
             self.cpu.hand.sort(key=lambda c: c.value)
             c_cards = [self.cpu.hand[0]] if self.cpu.hand else []
@@ -961,24 +1035,51 @@ class TacticalWrestlingApp:
             [("CPU ", "cpu"), (c_move, "move"), (f" [{c_score}]", "sys"), (self._cards_log_suffix(c_cards), "sys")]
         )
 
-        # Tie breaker.
+        # Tie resolution:
+        # 1) Higher remaining deck strength wins
+        # 2) If also tied, run the PUSH/HOLD tie-break.
         if p_score == c_score:
-            self._show_modal("Tie Break")
-            try:
-                player_won = lockup_minigame(
-                    self.root,
-                    title="Tie Break",
-                    prompt="TIE! PUSH or HOLD to win the clash.",
-                    host=self.modal_content,
-                )
-            finally:
-                self._hide_modal()
-            if bool(player_won):
-                winner, loser = self.player, self.cpu
-                w_move, w_cards, w_score = p_move, p_cards, p_score
+            p_str = self.player.strength_current()
+            c_str = self.cpu.strength_current()
+            if p_str != c_str:
+                if p_str > c_str:
+                    self._log(f"TIE on score; YOU win by higher remaining strength ({p_str}>{c_str}).")
+                    winner, loser = self.player, self.cpu
+                    w_move, w_cards, w_score = p_move, p_cards, p_score
+                else:
+                    self._log(f"TIE on score; CPU wins by higher remaining strength ({c_str}>{p_str}).")
+                    winner, loser = self.cpu, self.player
+                    w_move, w_cards, w_score = c_move, c_cards, c_score
             else:
-                winner, loser = self.cpu, self.player
-                w_move, w_cards, w_score = c_move, c_cards, c_score
+                # Hide the hand during the tie-break so PUSH/HOLD can't be covered.
+                self._set_hand_selecting(False)
+                hand_was_mapped = bool(self.hand_frame.winfo_ismapped())
+                if hand_was_mapped:
+                    try:
+                        self.hand_frame.pack_forget()
+                    except tk.TclError:
+                        hand_was_mapped = False
+                self._show_modal("Tie Break")
+                try:
+                    player_won = lockup_minigame(
+                        self.root,
+                        title="Tie Break",
+                        prompt="TIE! PUSH or HOLD to win the clash.",
+                        host=self.modal_content,
+                    )
+                finally:
+                    self._hide_modal()
+                    if hand_was_mapped:
+                        try:
+                            self.hand_frame.pack(fill="x", side="bottom", padx=8, pady=(0, self._safe_bottom))
+                        except tk.TclError:
+                            pass
+                if bool(player_won):
+                    winner, loser = self.player, self.cpu
+                    w_move, w_cards, w_score = p_move, p_cards, p_score
+                else:
+                    winner, loser = self.cpu, self.player
+                    w_move, w_cards, w_score = c_move, c_cards, c_score
         elif p_score > c_score:
             winner, loser = self.player, self.cpu
             w_move, w_cards, w_score = p_move, p_cards, p_score
@@ -987,16 +1088,34 @@ class TacticalWrestlingApp:
             w_move, w_cards, w_score = c_move, c_cards, c_score
 
         # Apply card-driven grit + discard/draw for both sides.
-        self.player.apply_grit_from_cards(p_cards)
+        self.player.apply_grit_from_cards(p_cards, ignore_cost=ignore_p_cost)
         self.player.discard_cards(p_cards)
         self.player.draw_to_full()
 
-        self.cpu.apply_grit_from_cards(c_cards)
+        self.cpu.apply_grit_from_cards(c_cards, ignore_cost=ignore_c_cost)
         self.cpu.discard_cards(c_cards)
         self.cpu.draw_to_full()
 
         # Execute the winning move.
         self._execute_move(attacker=winner, defender=loser, move_name=w_move, allow_reaction=False, clash_score=w_score)
+
+        # Utility moves that should still resolve when the winner did not deal damage
+        # (e.g., you should be able to stand up while the opponent taunts).
+        always_resolve = {"Rest", "Taunt", "Kip-up", "Slow Stand Up"}
+        winner_damage = int(MOVES.get(w_move, {}).get("damage", 0))
+
+        if winner_damage <= 0:
+            if winner is self.player:
+                loser_move_name = c_move
+                loser_attacker = self.cpu
+                loser_defender = self.player
+            else:
+                loser_move_name = p_move
+                loser_attacker = self.player
+                loser_defender = self.cpu
+
+            if loser_move_name in always_resolve and self._move_is_legal(loser_move_name, loser_attacker, loser_defender):
+                self._execute_move(attacker=loser_attacker, defender=loser_defender, move_name=loser_move_name, allow_reaction=False)
 
         # Reset UI for next clash.
         self.selected_move_name = None
@@ -1274,7 +1393,7 @@ class TacticalWrestlingApp:
             if name == "Taunt" and self.cpu.hype < 80:
                 base += 3.0
 
-            if name == "Chain Wrestle" and self.cpu.is_in_grapple():
+            if name == "Fight For Control" and self.cpu.is_in_grapple():
                 base += 5.0
             if t == "Pin" and self.player.state == WrestlerState.GROUNDED:
                 base += 25.0 * (1.0 - self.player.hp_pct())
@@ -1291,18 +1410,9 @@ class TacticalWrestlingApp:
         return options[0]
 
     def _cpu_take_turn(self) -> None:
-        if self.game_over or self.turn != "cpu":
-            return
-        move_name = self._cpu_choose_move()
-        keep_turn = self._execute_move(attacker=self.cpu, defender=self.player, move_name=move_name)
-        if self.game_over:
-            return
-        if keep_turn:
-            self._update_hud()
-            self._schedule(450, self._cpu_take_turn)
-            return
-        self.cpu.on_turn_end()
-        self._start_turn("player")
+        # Phase 2: CPU does not take a separate timed turn.
+        # The CPU response is resolved instantly during `_submit_cards`.
+        return
 
     # --- Reaction interrupts ---
     def _reaction_menu(self, incoming_damage: int) -> dict:
@@ -1352,8 +1462,8 @@ class TacticalWrestlingApp:
             if self.player.grit < 4:
                 b3.state(["disabled"])
 
-            # Auto-resolve to BRACE if the device doesn't register the tap.
-            self.root.after(12000, timeout)
+            # Phase 2: reaction interrupts are not used.
+            # Keep the dialog manual-only if reached.
 
             self.root.wait_variable(done_var)
             choice = choice_var.get()
@@ -1530,6 +1640,16 @@ class TacticalWrestlingApp:
                     (").", "sys"),
                 ]
             )
+            self._update_hud()
+            return False
+
+        if move_name == "Fight For Control":
+            if attacker.is_in_grapple() and defender.is_in_grapple():
+                attacker.grapple_role = GrappleRole.OFFENSE
+                defender.grapple_role = GrappleRole.DEFENSE
+                self._log_parts([(attacker.name, attacker_tag), (" secures the better position!", "sys")])
+            else:
+                self._log_parts([(attacker.name, attacker_tag), (" reaches for control, but there's no tie-up.", "sys")])
             self._update_hud()
             return False
 

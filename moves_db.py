@@ -181,17 +181,17 @@ MOVES: Dict[str, Move] = {
         "is_finisher": False,
         "flavor_text": "Fluid motion—over they go with an arm drag!",
     },
-    "Chain Wrestle": {
+    "Fight For Control": {
         "damage": 0,
         "cost": 0,
         "type": "Setup",
-        "req_user_state": "GRAPPLE_WEAK",
-        "req_target_state": "GRAPPLE_WEAK",
+        "req_user_state": "GRAPPLE_ANY",
+        "req_target_state": "GRAPPLE_ANY",
         "target_part": "NONE",
         "hype_gain": 5,
         "is_finisher": False,
         "flavor_text": "You fight for better positioning...",
-        "notes": "Stays in Weak state to build hype/grit.",
+        "notes": "Phase 2: used to contest control inside grapples.",
     },
 
     # =========================================================================

@@ -373,36 +373,87 @@ def lockup_minigame(
     embedded = host is not None
     content_w = _embedded_content_width(container) if embedded else 320
 
-    tk.Label(
-        container,
-        text=prompt,
-        font=("Arial", 11, "bold"),
-        bg=colors["bg"],
-        fg=colors["fg"],
-        justify=("left" if embedded else "center"),
-        anchor=("w" if embedded else "center"),
-        wraplength=(content_w if embedded else 0),
-    ).pack(padx=12, pady=(10, 4), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
-    tk.Label(
-        container,
-        text="Get closer to 15 without going over.",
-        font=("Arial", 9),
-        bg=colors["bg"],
-        fg=colors["subfg"],
-        justify=("left" if embedded else "center"),
-        anchor=("w" if embedded else "center"),
-        wraplength=(content_w if embedded else 0),
-    ).pack(padx=12, pady=(0, 6), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
-
     scores = {"p": 0, "c": 0}
     result = {"done": False, "success": False}
     done_var = tk.BooleanVar(value=False)
 
-    status = tk.Label(container, text="YOU: 0   |   CPU: 0", font=("Arial", 12, "bold"), bg=colors["bg"], fg=colors["fg"])
-    status.pack(padx=12, pady=(0, 6), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
+    if embedded:
+        root = tk.Frame(container, bg=colors["bg"])
+        root.pack(fill="both", expand=True)
+        root.columnconfigure(0, weight=1)
+        root.columnconfigure(1, weight=0)
 
-    log = tk.Label(container, text="", font=("Arial", 9), bg=colors["bg"], fg=colors["subfg"])
-    log.pack(padx=12, pady=(0, 6), fill=("x" if embedded else "none"), anchor=("w" if embedded else "center"))
+        left = tk.Frame(root, bg=colors["bg"])
+        left.grid(row=0, column=0, sticky="nsew", padx=(12, 8), pady=10)
+        right = tk.Frame(root, bg=colors["bg"])
+        right.grid(row=0, column=1, sticky="ne", padx=(0, 12), pady=10)
+
+        # Leave room for buttons by reducing wraplength.
+        wrap_w = max(180, int(content_w) - 140)
+        tk.Label(
+            left,
+            text=prompt,
+            font=("Arial", 11, "bold"),
+            bg=colors["bg"],
+            fg=colors["fg"],
+            justify="left",
+            anchor="w",
+            wraplength=wrap_w,
+        ).pack(fill="x", pady=(0, 4), anchor="w")
+        tk.Label(
+            left,
+            text="Get closer to 15 without going over.",
+            font=("Arial", 9),
+            bg=colors["bg"],
+            fg=colors["subfg"],
+            justify="left",
+            anchor="w",
+            wraplength=wrap_w,
+        ).pack(fill="x", pady=(0, 8), anchor="w")
+
+        status = tk.Label(left, text="YOU: 0   |   CPU: 0", font=("Arial", 12, "bold"), bg=colors["bg"], fg=colors["fg"], anchor="w")
+        status.pack(fill="x", pady=(0, 6), anchor="w")
+
+        log = tk.Label(left, text="", font=("Arial", 9), bg=colors["bg"], fg=colors["subfg"], anchor="w", justify="left", wraplength=wrap_w)
+        log.pack(fill="x", pady=(0, 0), anchor="w")
+
+        ttk.Button(
+            right,
+            text="PUSH",
+            command=lambda: push(),
+            style=("Embed.TButton" if host is not None else "TButton"),
+        ).pack(fill="x", pady=(0, 6))
+        ttk.Button(
+            right,
+            text="HOLD",
+            command=lambda: hold(),
+            style=("Embed.TButton" if host is not None else "TButton"),
+        ).pack(fill="x")
+    else:
+        tk.Label(
+            container,
+            text=prompt,
+            font=("Arial", 11, "bold"),
+            bg=colors["bg"],
+            fg=colors["fg"],
+            justify="center",
+            anchor="center",
+        ).pack(padx=12, pady=(10, 4))
+        tk.Label(
+            container,
+            text="Get closer to 15 without going over.",
+            font=("Arial", 9),
+            bg=colors["bg"],
+            fg=colors["subfg"],
+            justify="center",
+            anchor="center",
+        ).pack(padx=12, pady=(0, 6))
+
+        status = tk.Label(container, text="YOU: 0   |   CPU: 0", font=("Arial", 12, "bold"), bg=colors["bg"], fg=colors["fg"])
+        status.pack(padx=12, pady=(0, 6))
+
+        log = tk.Label(container, text="", font=("Arial", 9), bg=colors["bg"], fg=colors["subfg"])
+        log.pack(padx=12, pady=(0, 6))
 
     def refresh() -> None:
         status.config(text=f"YOU: {scores['p']}   |   CPU: {scores['c']}")
@@ -451,24 +502,9 @@ def lockup_minigame(
         else:
             finish(False, "CPU muscles you around and takes control!")
 
-    btns = tk.Frame(container, bg=colors["bg"])
-    btns.pack(padx=12, pady=(0, 10), fill="x")
-
-    # Compact layout when embedded so controls don't fall below the app's Hand bar.
-    if embedded:
-        ttk.Button(
-            btns,
-            text="PUSH",
-            command=push,
-            style=("Embed.TButton" if host is not None else "TButton"),
-        ).pack(side="left", expand=True, fill="x", padx=(0, 6))
-        ttk.Button(
-            btns,
-            text="HOLD",
-            command=hold,
-            style=("Embed.TButton" if host is not None else "TButton"),
-        ).pack(side="left", expand=True, fill="x")
-    else:
+    if not embedded:
+        btns = tk.Frame(container, bg=colors["bg"])
+        btns.pack(padx=12, pady=(0, 10), fill="x")
         ttk.Button(btns, text="PUSH", command=push, style=("Embed.TButton" if host is not None else "TButton")).pack(fill="x", pady=4)
         ttk.Button(btns, text="HOLD", command=hold, style=("Embed.TButton" if host is not None else "TButton")).pack(fill="x", pady=4)
 

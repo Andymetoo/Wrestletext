@@ -34,14 +34,19 @@ class Card:
         return 1 if self.value <= 5 else 0
 
     def color_bonus(self, move_type: str) -> int:
-        """Returns +1 if the card color matches the move type."""
+        """Returns +1 if the card color matches the move type.
+
+        GRAY cards never provide a bonus (GRAY means no bonus).
+        """
+        if self.color == "GRAY":
+            return 0
         mapping = {
             "Strike": "RED",
             "Grapple": "BLUE",
             "Submission": "GREEN",
             "Aerial": "YELLOW",
             "Pin": "GREEN",
-            "Setup": "GRAY",
+            # NOTE: Setup moves do not get a color bonus.
         }
         return 1 if mapping.get(move_type) == self.color else 0
 
@@ -51,6 +56,8 @@ class Deck:
         self.cards: list[Card] = []
         self.discards: list[Card] = []
         self._build(archetype)
+        # Total value of a full 50-card deck (constant for a given build).
+        self.max_strength: int = sum(int(c.value) for c in self.cards)
         self.shuffle()
 
     def _build(self, archetype: str) -> None:
