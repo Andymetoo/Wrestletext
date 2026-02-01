@@ -10,7 +10,13 @@ from moves_db import MOVES
 from wrestler import GrappleRole, MAX_HEALTH, Wrestler, WrestlerState
 
 
+COLOR_GRIT = "#bb86fc"  # Purple
+COLOR_HYPE = "#ff9800"  # Orange
+COLOR_DMG = "#ff5555"   # Red
+
+
 MOVE_TYPE_FG: dict[str, str] = {
+    "Defensive": "#f2f2f2",
     "Strike": HEX_COLORS.get("RED", "#f2f2f2"),
     "Grapple": HEX_COLORS.get("BLUE", "#f2f2f2"),
     "Submission": HEX_COLORS.get("GREEN", "#f2f2f2"),
@@ -43,8 +49,9 @@ class TacticalWrestlingApp:
         # Android wrappers often have a bottom nav bar that overlaps the lowest pixels.
         # Reserve a small "safe area" so the Hand/SUBMIT can't be covered.
         self._safe_bottom = max(12, min(72, int(self._screen_h * 0.04)))
-        self._hand_h_collapsed = max(72, min(160, int(self._screen_h * 0.11)))
-        self._hand_h_expanded = max(140, min(280, int(self._screen_h * 0.20)))
+        # Hand height: keep it stable and visible on mobile.
+        self._hand_h_collapsed = max(92, min(240, int(self._screen_h * 0.18)))
+        self._hand_h_expanded = max(120, min(320, int(self._screen_h * 0.24)))
 
         self.player = Wrestler("YOU", True)
         self.cpu = Wrestler("CPU", False)
@@ -59,8 +66,13 @@ class TacticalWrestlingApp:
         self.selected_move_name: str | None = None
         self._selected_card_idxs: set[int] = set()
         self._hand_selecting: bool = False
-        self._survival_mode: dict | None = None
-        self._survival_labels: dict[str, tk.Label] = {}
+
+        # Category menu state
+        self._menu_stage: str = "CATEGORIES"  # CATEGORIES | MOVES | HYPE_SHOP | ESCAPE
+        self._selected_category: str | None = None
+
+        # Accumulative escape loop (Pin/Submission)
+        self._escape_mode: dict | None = None
 
         self._build_ui()
         self._log("Match start. Win only by Pinfall or Submission.")
@@ -282,6 +294,25 @@ class TacticalWrestlingApp:
 
         top_row = tk.Frame(self.hand_frame, bg="#000")
         top_row.pack(fill="x")
+
+        # Small system button for restart/menu.
+        # Pack it into the hand header (not place/overlay) so it can't cover cards on mobile.
+        self.sys_btn = tk.Button(
+            top_row,
+            text="S",
+            width=2,
+            height=1,
+            font=("Arial", 9, "bold"),
+            bg="#222",
+            fg="#f2f2f2",
+            activebackground="#333",
+            activeforeground="#fff",
+            bd=1,
+            relief="raised",
+            command=self._open_system_menu,
+        )
+        self.sys_btn.pack(side="left", padx=(6, 4), pady=6)
+
         self.hand_hint = tk.Label(
             top_row,
             text="Pick a move above.",
@@ -332,23 +363,7 @@ class TacticalWrestlingApp:
         # Now pack the moves frame so it uses the remaining space above the hand.
         self.moves_frame.pack(fill="both", expand=True, pady=(0, 8))
 
-        # Small system button (bottom-left) for restart without quitting.
-        self.sys_btn = tk.Button(
-            self.root,
-            text="S",
-            width=2,
-            height=1,
-            font=("Arial", 9, "bold"),
-            bg="#222",
-            fg="#f2f2f2",
-            activebackground="#333",
-            activeforeground="#fff",
-            bd=1,
-            relief="raised",
-            command=self._open_system_menu,
-        )
-        # Keep it above the phone nav-bar safe area.
-        self.sys_btn.place(x=6, y=-(self._safe_bottom + 6), anchor="sw", relx=0.0, rely=1.0)
+        # (sys button is packed into the hand header above)
 
     def _schedule(self, ms: int, func) -> None:
         """Schedule a callback and keep track so restart can cancel it."""
@@ -387,8 +402,10 @@ class TacticalWrestlingApp:
         self.selected_move_name = None
         self._selected_card_idxs = set()
         self._hand_selecting = False
-        self._survival_mode = None
-        self._survival_labels = {}
+
+        self._menu_stage = "CATEGORIES"
+        self._selected_category = None
+        self._escape_mode = None
 
         # Ensure HUD bars match new wrestler caps.
         self.p_grit.configure(maximum=self.player.max_grit)
@@ -397,6 +414,19 @@ class TacticalWrestlingApp:
         self._clear_log()
         self._log("Match restarted. Win only by Pinfall or Submission.")
         self._update_hud()
+        # Defensive: if the hand was temporarily hidden (e.g., during a tie-break),
+        # ensure it's packed back into its intended position.
+        try:
+            if not self.hand_frame.winfo_ismapped():
+                self.hand_frame.pack(
+                    before=self.center_frame,
+                    fill="x",
+                    side="bottom",
+                    padx=8,
+                    pady=(0, self._safe_bottom),
+                )
+        except tk.TclError:
+            pass
         self._refresh_hand_ui()
         self._start_turn("player")
 
@@ -576,11 +606,32 @@ class TacticalWrestlingApp:
                     return False
             elif rt != target.state.value:
                 return False
+
+        # ------------------------------------------------------------------
+        # Phase 2 flow: Advantage/Disadvantage gating (AKI-style)
+        # ------------------------------------------------------------------
+        user_adv = user.is_in_grapple() and (user.grapple_role == GrappleRole.OFFENSE)
+        user_dis = user.is_in_grapple() and (user.grapple_role == GrappleRole.DEFENSE)
+
+        # Disadvantaged wrestlers cannot pick offensive grapple/power options.
+        if user_dis:
+            if move_name not in {"Fight For Control", "Defensive", "Rest"}:
+                return False
+
+        # Defensive is only usable in neutral standing or while disadvantaged.
+        if move_name == "Defensive":
+            if user_adv:
+                return False
+            neutral_ok = (user.state == WrestlerState.STANDING and target.state == WrestlerState.STANDING)
+            if not (neutral_ok or user_dis):
+                return False
+
         return True
 
     def _is_universal_action(self, move_name: str) -> bool:
         # Requested universal actions, plus a few safety/escape options to avoid soft-locks.
         return move_name in {
+            "Defensive",
             "Rest",
             "Taunt",
             "Lock Up",
@@ -602,7 +653,7 @@ class TacticalWrestlingApp:
 
         # Neutral restrictions: standing (neutral) only allows strikes, attempt grapple, and taunts.
         if user.state == WrestlerState.STANDING and target.state == WrestlerState.STANDING:
-            allowed_names = {"Lock Up", "Taunt"}
+            allowed_names = {"Lock Up", "Taunt", "Defensive"}
             names = [n for n in names if MOVES[n].get("type") == "Strike" or n in allowed_names]
             if self._move_is_legal("Rest", user, target) and self._passes_moveset(user, "Rest"):
                 names.append("Rest")
@@ -611,7 +662,7 @@ class TacticalWrestlingApp:
 
         def key(n: str) -> tuple[int, int, str]:
             t = MOVES[n]["type"]
-            type_order = {"Setup": 0, "Strike": 1, "Grapple": 2, "Aerial": 3, "Submission": 4, "Pin": 5}
+            type_order = {"Defensive": 0, "Setup": 1, "Strike": 2, "Grapple": 3, "Aerial": 4, "Submission": 5, "Pin": 6}
             return (type_order.get(t, 99), int(MOVES[n]["cost"]), n)
 
         return sorted(names, key=key)
@@ -659,60 +710,274 @@ class TacticalWrestlingApp:
             self._in_grapple_followup_picker = False
             self._hide_modal()
 
-    def _refresh_player_buttons(self) -> None:
+    # --- Category Menu UI (Phase 2) ---
+    def _set_menu_stage(self, stage: str, *, category: str | None = None) -> None:
+        self._menu_stage = str(stage)
+        self._selected_category = category
+        self._update_move_list_ui()
+
+    def _category_has_moves(self, category: str) -> bool:
+        moves = self._available_moves(self.player, self.cpu)
+        if category == "STRIKES":
+            return any(MOVES[m].get("type") == "Strike" for m in moves)
+        if category == "GRAPPLES":
+            return any(MOVES[m].get("type") in {"Grapple", "Submission", "Pin"} for m in moves)
+        if category == "AERIAL_RUNNING":
+            return any(MOVES[m].get("type") == "Aerial" or self.player.state in {WrestlerState.RUNNING, WrestlerState.TOP_ROPE} for m in moves)
+        if category == "UTILITY":
+            return any(MOVES[m].get("type") in {"Setup", "Defensive"} for m in moves)
+        return True
+
+    def _make_move_tile(self, parent: tk.Widget, *, move_name: str, move: dict, disabled: bool, finisher: bool) -> tk.Frame:
+        outer = tk.Frame(parent, bg=("#d4af37" if finisher else "#222"), bd=2, relief="flat")
+        inner_bg = "#1f1f1f" if not disabled else "#121212"
+        inner = tk.Frame(outer, bg=inner_bg)
+        inner.pack(fill="both", expand=True)
+
+        def on_pick() -> None:
+            if disabled:
+                return
+            self._select_move(move_name)
+
+        name_fg = "#d4af37" if finisher else "#f2f2f2"
+        if disabled:
+            name_fg = "#666"
+        tk.Button(
+            inner,
+            text=move_name,
+            font=("Arial", 10, "bold"),
+            bg=inner_bg,
+            fg=name_fg,
+            activebackground="#333",
+            activeforeground="#fff",
+            bd=0,
+            highlightthickness=0,
+            command=on_pick,
+            state=("disabled" if disabled else "normal"),
+            disabledforeground="#666",
+        ).pack(fill="x", padx=6, pady=(6, 2))
+
+        dmg = int(move.get("damage", 0))
+        cost = int(move.get("cost", 0))
+        hype = int(move.get("hype_gain", 0))
+
+        stats = tk.Frame(inner, bg=inner_bg)
+        stats.pack(fill="x", padx=6, pady=(0, 6))
+
+        def lbl(text: str, fg: str = "#aaa") -> tk.Label:
+            return tk.Label(stats, text=text, fg=("#666" if disabled else fg), bg=inner_bg, font=("Arial", 9, "bold"))
+
+        lbl("").pack(side="left")
+        lbl(str(dmg), fg=COLOR_DMG).pack(side="left")
+        lbl(" Dmg | ").pack(side="left")
+        lbl(str(cost), fg=COLOR_GRIT).pack(side="left")
+        lbl(" Grit | ").pack(side="left")
+        sign = "+" if hype >= 0 else ""
+        lbl(f"{sign}{hype}", fg=COLOR_HYPE).pack(side="left")
+        lbl(" Hype").pack(side="left")
+
+        # Make the whole tile clickable.
+        outer.bind("<Button-1>", lambda _e: on_pick())
+        inner.bind("<Button-1>", lambda _e: on_pick())
+        stats.bind("<Button-1>", lambda _e: on_pick())
+        return outer
+
+    def _update_move_list_ui(self) -> None:
         for child in list(self.moves_grid.winfo_children()):
             child.destroy()
 
         if self.game_over:
             return
 
-        if self._survival_mode is not None:
+        if self._escape_mode is not None:
+            em = dict(self._escape_mode)
+            kind = str(em.get("kind", "ESCAPE"))
+            total = int(em.get("total", 0))
+            threshold = int(em.get("threshold", 1))
+            plays_left = int(em.get("plays_left", 0))
+            turn_num = 3 - plays_left + 1
+            turn_num = max(1, min(3, turn_num))
+
+            tk.Label(
+                self.moves_grid,
+                text=f"{kind}!",
+                fg="#f2f2f2",
+                bg="#101010",
+                font=("Arial", 14, "bold"),
+            ).grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=(6, 2))
+
+            tk.Label(
+                self.moves_grid,
+                text=f"Attempt {turn_num}/3    Total: {total}/{threshold}",
+                fg="#aaa",
+                bg="#101010",
+                font=("Arial", 11, "bold"),
+            ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
+
+            tk.Label(
+                self.moves_grid,
+                text="Tap a card to discard it. No redraw during the escape.",
+                fg="#aaa",
+                bg="#101010",
+                font=("Arial", 10),
+                wraplength=420,
+                justify="left",
+            ).grid(row=2, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
             return
 
-        moves_to_show = self._available_moves(self.player, self.cpu)
-        if len(moves_to_show) == 0:
-            moves_to_show = ["Rest"]
+        # Stage 1: category menu
+        if self._menu_stage == "CATEGORIES":
+            buttons: list[tuple[str, str]] = [
+                ("STRIKES", "STRIKES"),
+                ("GRAPPLES", "GRAPPLES"),
+                ("AERIAL/RUNNING", "AERIAL_RUNNING"),
+                ("UTILITY", "UTILITY"),
+                ("HYPE SHOP", "HYPE_SHOP"),
+            ]
 
-        max_buttons = 16
-        moves_to_show = moves_to_show[:max_buttons]
+            for idx, (label, key) in enumerate(buttons):
+                enabled = True
+                if key == "GRAPPLES":
+                    # Only enable if not pure neutral OR if there are grapple-ish moves legal.
+                    enabled = (self.player.state != WrestlerState.STANDING) or self._category_has_moves("GRAPPLES")
+                elif key == "AERIAL_RUNNING":
+                    enabled = self._category_has_moves("AERIAL_RUNNING")
+                elif key == "UTILITY":
+                    enabled = self._category_has_moves("UTILITY")
 
-        # In Phase 2, player can change the selected move while picking cards.
-        # (We keep moves disabled only during survival mode.)
-        disable_moves = bool(self._survival_mode is not None)
-        for idx, name in enumerate(moves_to_show):
-            move = MOVES[name]
-            dmg = int(move["damage"])
-            mtype = str(move.get("type", ""))
-            label = f"{name}\n{mtype}"
-            if dmg > 0:
-                label += f" | {dmg}"
+                def go(k=key) -> None:
+                    if k == "HYPE_SHOP":
+                        self._set_menu_stage("HYPE_SHOP")
+                    else:
+                        self._set_menu_stage("MOVES", category=k)
 
-            is_selected = (self.selected_move_name == name)
-            bg = "#3a3a5a" if is_selected else "#2f2f2f"
-            fg = MOVE_TYPE_FG.get(mtype, "#f2f2f2")
-            disabled_fg = "#666" if disable_moves else fg
+                r, c = divmod(idx, 2)
+                btn = tk.Button(
+                    self.moves_grid,
+                    text=f"[{label}]",
+                    height=3,
+                    font=("Arial", 12, "bold"),
+                    bg="#2f2f2f",
+                    fg="#f2f2f2",
+                    disabledforeground="#666",
+                    activebackground="#444",
+                    activeforeground="#fff",
+                    command=go,
+                    state=("normal" if enabled else "disabled"),
+                )
+                btn.grid(row=r, column=c, sticky="nsew", padx=6, pady=6)
+            return
 
-            r, c = divmod(idx, 2)
-            btn = tk.Button(
+        # Stage: Hype Shop
+        if self._menu_stage == "HYPE_SHOP":
+            ttk.Button(self.moves_grid, text="RETURN", command=lambda: self._set_menu_stage("CATEGORIES"))\
+                .grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=(6, 10))
+
+            tk.Label(
                 self.moves_grid,
-                text=label,
-                height=2,
-                font=("Arial", 10, "bold"),
-                bg=bg,
-                fg=fg,
-                disabledforeground=disabled_fg,
-                activebackground="#444",
-                activeforeground="#fff",
-                command=lambda n=name: self._select_move(n),
-                state=("disabled" if disable_moves else "normal"),
-            )
-            btn.grid(row=r, column=c, sticky="nsew", padx=4, pady=4)
+                text="HYPE SHOP",
+                fg=COLOR_HYPE,
+                bg="#101010",
+                font=("Arial", 12, "bold"),
+            ).grid(row=1, column=0, columnspan=2, sticky="w", padx=6)
+
+            def buy_pump() -> None:
+                if self.player.hype < 25:
+                    return
+                self.player.hype -= 25
+                self.player.next_card_bonus = max(self.player.next_card_bonus, 1)
+                self._log("Hype Shop: Pump Up purchased (+1 to next played card).")
+                self._update_hud()
+                self._update_move_list_ui()
+
+            def buy_adrenaline() -> None:
+                if self.player.hype < 50:
+                    return
+                self.player.hype -= 50
+                self.player.next_card_bonus = max(self.player.next_card_bonus, 2)
+                self._log("Hype Shop: Adrenaline purchased (+2 to next played card).")
+                self._update_hud()
+                self._update_move_list_ui()
+
+            def buy_second_wind() -> None:
+                if self.player.hype < 80:
+                    return
+                self.player.hype -= 80
+                self.player.hp = min(MAX_HEALTH, self.player.hp + 15)
+                self._log("Hype Shop: Second Wind! (+15 HP)")
+                self._update_hud()
+                self._update_move_list_ui()
+
+            b1 = tk.Button(self.moves_grid, text="Pump Up (25 Hype): Next card +1", command=buy_pump, bg="#2f2f2f", fg="#f2f2f2")
+            b2 = tk.Button(self.moves_grid, text="Adrenaline (50 Hype): Next card +2", command=buy_adrenaline, bg="#2f2f2f", fg="#f2f2f2")
+            b3 = tk.Button(self.moves_grid, text="Second Wind (80 Hype): Heal 15 HP", command=buy_second_wind, bg="#2f2f2f", fg="#f2f2f2")
+
+            if self.player.hype < 25:
+                b1.config(state="disabled")
+            if self.player.hype < 50:
+                b2.config(state="disabled")
+            if self.player.hype < 80:
+                b3.config(state="disabled")
+
+            b1.grid(row=2, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
+            b2.grid(row=3, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
+            b3.grid(row=4, column=0, columnspan=2, sticky="ew", padx=6, pady=6)
+            return
+
+        # Stage 2: moves within a category
+        if self._menu_stage == "MOVES":
+            ttk.Button(
+                self.moves_grid,
+                text="RETURN",
+                command=lambda: self._set_menu_stage("CATEGORIES"),
+            ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=(6, 10))
+
+            cat = str(self._selected_category or "UTILITY")
+            avail = self._available_moves(self.player, self.cpu)
+            if not avail:
+                avail = ["Rest"]
+
+            def in_cat(name: str) -> bool:
+                t = str(MOVES[name].get("type", "Setup"))
+                if cat == "STRIKES":
+                    return t == "Strike"
+                if cat == "GRAPPLES":
+                    return t in {"Grapple", "Submission", "Pin"}
+                if cat == "AERIAL_RUNNING":
+                    return t == "Aerial" or self.player.state in {WrestlerState.RUNNING, WrestlerState.TOP_ROPE}
+                if cat == "UTILITY":
+                    return t in {"Setup", "Defensive"}
+                return True
+
+            moves_to_show = [m for m in avail if in_cat(m)]
+            if not moves_to_show:
+                moves_to_show = ["Rest"]
+
+            # Render tiles.
+            max_buttons = 18
+            moves_to_show = moves_to_show[:max_buttons]
+
+            has_doubles = self.player.has_doubles_in_hand()
+            for idx, name in enumerate(moves_to_show):
+                mv = MOVES[name]
+                finisher = bool(mv.get("is_finisher"))
+                disabled = False
+                if finisher and not has_doubles:
+                    disabled = True
+
+                tile = self._make_move_tile(self.moves_grid, move_name=name, move=mv, disabled=disabled, finisher=finisher)
+                r, c = divmod(idx + 2, 2)
+                tile.grid(row=r, column=c, sticky="nsew", padx=6, pady=6)
+            return
+
+    def _refresh_player_buttons(self) -> None:
+        self._update_move_list_ui()
 
     # --- Phase 2: Card UI / Clash flow ---
     def _set_hand_selecting(self, selecting: bool, *, hint: str | None = None) -> None:
         self._hand_selecting = bool(selecting)
         if hint is None:
-            hint = "Pick a move above." if not selecting else "Select a card." 
+            hint = "Pick a move above." if not selecting else "Select a card."
         try:
             self.hand_hint.config(text=hint)
         except tk.TclError:
@@ -723,16 +988,19 @@ class TacticalWrestlingApp:
                 self.hand_frame.config(height=self._hand_h_expanded)
             except tk.TclError:
                 pass
-            if not self.submit_btn.winfo_ismapped():
-                try:
-                    self.deck_label.pack_forget()
-                except tk.TclError:
-                    pass
-                self.submit_btn.pack(side="right", padx=6, pady=6)
-                try:
-                    self.deck_label.pack(side="right")
-                except tk.TclError:
-                    pass
+
+            # Escape loop is tap-to-discard; don't show SUBMIT.
+            if self._escape_mode is None:
+                if not self.submit_btn.winfo_ismapped():
+                    try:
+                        self.deck_label.pack_forget()
+                    except tk.TclError:
+                        pass
+                    self.submit_btn.pack(side="right", padx=6, pady=6)
+                    try:
+                        self.deck_label.pack(side="right")
+                    except tk.TclError:
+                        pass
         else:
             try:
                 self.hand_frame.config(height=self._hand_h_collapsed)
@@ -759,11 +1027,13 @@ class TacticalWrestlingApp:
         self._refresh_hand_ui()
 
     def _refresh_hand_ui(self) -> None:
-        # Defensive: ensure the hand is actually populated before rendering.
-        try:
-            self.player.draw_to_full()
-        except Exception:
-            pass
+        # Defensive: ensure the hand is populated before rendering.
+        # Escape loop restriction: defender cannot draw new cards.
+        if self._escape_mode is None:
+            try:
+                self.player.draw_to_full()
+            except Exception:
+                pass
         hand = list(self.player.hand or [])
         for i, widget in enumerate(self.card_widgets):
             frame: tk.Frame = widget["frame"]
@@ -795,7 +1065,7 @@ class TacticalWrestlingApp:
     def _select_move(self, move_name: str) -> None:
         if self.game_over:
             return
-        if self._survival_mode is not None:
+        if self._escape_mode is not None:
             return
 
         # Special case: Lock Up is the only remaining "minigame" action.
@@ -824,7 +1094,13 @@ class TacticalWrestlingApp:
                 self._hide_modal()
                 if hand_was_mapped:
                     try:
-                        self.hand_frame.pack(fill="x", side="bottom", padx=8, pady=(0, self._safe_bottom))
+                        self.hand_frame.pack(
+                            before=self.center_frame,
+                            fill="x",
+                            side="bottom",
+                            padx=8,
+                            pady=(0, self._safe_bottom),
+                        )
                     except tk.TclError:
                         pass
 
@@ -856,15 +1132,29 @@ class TacticalWrestlingApp:
         else:
             self._log_parts([("Selected move: ", "sys"), (move_name, "move")])
 
-        self._set_hand_selecting(True, hint=f"Pick 1 card (or doubles) for {move_name}.")
+        if move_name == "Defensive":
+            self._set_hand_selecting(
+                True,
+                hint=(
+                    "DEFENSIVE: cannot win clashes. Discard up to 2 cards (value ≤ 5). "
+                    "Cannot beat totals of 10+. Used to dodge/brace/survive pressure."
+                ),
+            )
+        else:
+            self._set_hand_selecting(True, hint=f"Pick 1 card (or doubles) for {move_name}.")
         self._refresh_player_buttons()
 
     def _on_card_click(self, index: int) -> None:
         if self.game_over:
             return
 
-        # Cards are only clickable while selecting for a clash or during survival mode.
-        if not self._hand_selecting and self._survival_mode is None:
+        # Accumulative escape loop: clicking a card spends it immediately.
+        if self._escape_mode is not None and bool(self._escape_mode.get("defender_is_player")):
+            self._escape_play_card(index)
+            return
+
+        # Cards are only clickable while selecting for a clash.
+        if not self._hand_selecting:
             return
 
         hand = list(self.player.hand or [])
@@ -876,17 +1166,25 @@ class TacticalWrestlingApp:
         else:
             self._selected_card_idxs.add(index)
 
-        # Enforce selection rules: max 2; 2 must be doubles.
+        # Enforce selection rules (contextual):
+        # - Defensive: discard up to 2 cards; each must be <= 5; no doubles requirement.
+        # - Normal: max 2; 2 must be doubles.
         if len(self._selected_card_idxs) > 2:
-            # Remove the most recent add.
             self._selected_card_idxs.remove(index)
             self._log("Max 2 cards.")
-        elif len(self._selected_card_idxs) == 2:
-            i1, i2 = sorted(self._selected_card_idxs)
-            if hand[i1].value != hand[i2].value:
-                # Not doubles; undo.
-                self._selected_card_idxs.remove(index)
-                self._log("Two cards must be doubles (same value).")
+        else:
+            if self.selected_move_name == "Defensive":
+                # Only low cards may be discarded.
+                bad = [i for i in self._selected_card_idxs if int(hand[i].value) > 5]
+                if bad:
+                    self._selected_card_idxs.remove(index)
+                    self._log("Defensive can only discard cards value ≤ 5.")
+            else:
+                if len(self._selected_card_idxs) == 2:
+                    i1, i2 = sorted(self._selected_card_idxs)
+                    if hand[i1].value != hand[i2].value:
+                        self._selected_card_idxs.remove(index)
+                        self._log("Two cards must be doubles (same value).")
 
         self._refresh_hand_ui()
 
@@ -895,15 +1193,17 @@ class TacticalWrestlingApp:
         if not self.submit_btn.winfo_ismapped():
             return
 
-        if self._survival_mode is not None:
-            enabled = len(self._selected_card_idxs) in {1, 2}
+        if self.selected_move_name == "Defensive":
+            enabled = bool(self.selected_move_name) and (len(self._selected_card_idxs) in {0, 1, 2})
         else:
             enabled = bool(self.selected_move_name) and (len(self._selected_card_idxs) in {1, 2})
 
         cards = self._selected_player_cards()
-        if enabled and cards:
-            ignore_cost = (self.selected_move_name == "Rest") and (self._survival_mode is None)
-            if not self.player.can_afford_cards(cards, ignore_cost=ignore_cost):
+        if enabled:
+            move_cost = int(MOVES.get(self.selected_move_name or "", {}).get("cost", 0))
+            ignore_card_cost = (self.selected_move_name == "Rest")
+            card_cost = 0 if ignore_card_cost else sum(int(c.grit_cost()) for c in (cards or []))
+            if int(self.player.grit) < int(move_cost) + int(card_cost):
                 enabled = False
 
         self.submit_btn.config(state=("normal" if enabled else "disabled"))
@@ -912,12 +1212,16 @@ class TacticalWrestlingApp:
         hand = list(self.player.hand or [])
         idxs = sorted(self._selected_card_idxs)
         cards = [hand[i] for i in idxs if 0 <= i < len(hand)]
-        # Enforce doubles-only for 2 cards.
-        if len(cards) == 2 and cards[0].value != cards[1].value:
-            return []
+        # Enforce context-specific 2-card legality.
+        if self.selected_move_name == "Defensive":
+            if any(int(c.value) > 5 for c in cards):
+                return []
+        else:
+            if len(cards) == 2 and cards[0].value != cards[1].value:
+                return []
         return cards
 
-    def _calc_clash_score(self, move_name: str, cards: list) -> int:
+    def _calc_clash_score(self, move_name: str, cards: list, *, card_bonus: int = 0) -> int:
         # Doubles rule: if you play 2 matching cards, you get +5 and the base
         # counts the value once (not twice).
         if len(cards) == 2 and int(cards[0].value) == int(cards[1].value):
@@ -932,6 +1236,7 @@ class TacticalWrestlingApp:
             base += max(int(cards[0].color_bonus(move_type)), int(cards[1].color_bonus(move_type)))
         else:
             base += sum(int(c.color_bonus(move_type)) for c in cards)
+        base += int(card_bonus)
         return int(base)
 
     def _cards_log_suffix(self, cards: list) -> str:
@@ -949,47 +1254,57 @@ class TacticalWrestlingApp:
         if not hand:
             return []
 
-        best_cards: list = []
-        best_score = -1
+        # Defensive: discard up to 2 low cards (<=5) to form a defense pool.
+        if move_name == "Defensive":
+            low = sorted([c for c in hand if int(c.value) <= 5], key=lambda c: int(c.value), reverse=True)
+            return low[:2]
 
-        ignore_cost = (move_name == "Rest")
+        # Finishers require a doubles pair in hand.
+        if bool(MOVES.get(move_name, {}).get("is_finisher")) and (not self.cpu.has_doubles_in_hand()):
+            return []
 
-        # Singles.
+        move_cost = int(MOVES.get(move_name, {}).get("cost", 0))
+        ignore_card_cost = (move_name == "Rest")
+
+        # Build candidate plays (singles and doubles).
+        candidates: list[list] = []
         for c in hand:
-            if self.cpu.can_afford_cards([c], ignore_cost=ignore_cost):
-                s = self._calc_clash_score(move_name, [c])
-                if s > best_score:
-                    best_score = s
-                    best_cards = [c]
+            card_cost = 0 if ignore_card_cost else int(c.grit_cost())
+            if int(self.cpu.grit) >= int(move_cost) + int(card_cost):
+                candidates.append([c])
 
-        # Doubles (pairs with same value).
         by_val: dict[int, list] = {}
         for c in hand:
             by_val.setdefault(int(c.value), []).append(c)
         for v, cs in by_val.items():
             if len(cs) >= 2:
                 pair = [cs[0], cs[1]]
-                if self.cpu.can_afford_cards(pair, ignore_cost=ignore_cost):
-                    s = self._calc_clash_score(move_name, pair)
-                    if s > best_score:
-                        best_score = s
-                        best_cards = pair
+                card_cost = 0 if ignore_card_cost else sum(int(x.grit_cost()) for x in pair)
+                if int(self.cpu.grit) >= int(move_cost) + int(card_cost):
+                    candidates.append(pair)
 
-        if best_cards:
-            return best_cards
+        if not candidates:
+            return []
 
-        # Fallback: play the lowest card.
-        hand.sort(key=lambda c: c.value)
-        return [hand[0]]
+        # Mistake: pick random valid.
+        if random.random() < float(self.cpu.mistake_prob):
+            return random.choice(candidates)
+
+        # Greedy: pick highest-value.
+        def value_key(cs: list) -> tuple[int, int]:
+            # Prefer doubles if they increase raw value; tie-break by clash score.
+            raw = sum(int(c.value) for c in cs)
+            score = self._calc_clash_score(move_name, cs, card_bonus=int(self.cpu.next_card_bonus)) if move_name != "Defensive" else -1
+            return (raw, score)
+
+        candidates.sort(key=value_key, reverse=True)
+        return candidates[0]
 
     def _submit_cards(self) -> None:
         if self.game_over:
             return
 
-        # Survival mode takes priority.
-        if self._survival_mode is not None:
-            if bool(self._survival_mode.get("defender_is_player")):
-                self._survival_submit()
+        if self._escape_mode is not None:
             return
 
         if not self.selected_move_name:
@@ -1007,125 +1322,183 @@ class TacticalWrestlingApp:
             return
 
         p_cards = self._selected_player_cards()
-        if not p_cards:
-            self._log("Select 1 card (or doubles).")
-            return
-
-        ignore_p_cost = (self.selected_move_name == "Rest")
-        if not self.player.can_afford_cards(p_cards, ignore_cost=ignore_p_cost):
-            self._log("Not enough grit to play those card(s).")
-            return
+        if self.selected_move_name == "Defensive":
+            # Defensive may discard 0..2 cards.
+            if len(p_cards) > 2:
+                self._log("Defensive: discard up to 2 cards (value ≤ 5).")
+                return
+        else:
+            if not p_cards:
+                self._log("Select 1 card (or doubles).")
+                return
 
         p_move = str(self.selected_move_name)
+        p_move_cost = int(MOVES.get(p_move, {}).get("cost", 0))
+        ignore_p_card_cost = (p_move == "Rest")
+        p_card_cost = 0 if ignore_p_card_cost else sum(int(c.grit_cost()) for c in (p_cards or []))
+        if int(self.player.grit) < int(p_move_cost) + int(p_card_cost):
+            self._log("Not enough grit (move + card cost).")
+            return
         c_move = self._cpu_choose_move()
         c_cards = self._cpu_choose_cards(move_name=c_move)
-        ignore_c_cost = (c_move == "Rest")
-        if c_cards and (not self.cpu.can_afford_cards(c_cards, ignore_cost=ignore_c_cost)):
-            # Should be rare; degrade to single lowest.
-            self.cpu.hand.sort(key=lambda c: c.value)
-            c_cards = [self.cpu.hand[0]] if self.cpu.hand else []
+        c_move_cost = int(MOVES.get(c_move, {}).get("cost", 0))
+        ignore_c_card_cost = (c_move == "Rest")
+        c_card_cost = 0 if ignore_c_card_cost else sum(int(c.grit_cost()) for c in (c_cards or []))
+        if int(self.cpu.grit) < int(c_move_cost) + int(c_card_cost):
+            # If the AI can't pay, degrade to the cheapest playable single.
+            hand = list(self.cpu.hand or [])
+            hand.sort(key=lambda c: int(c.value))
+            c_cards = []
+            for c in hand:
+                ccost = 0 if ignore_c_card_cost else int(c.grit_cost())
+                if int(self.cpu.grit) >= int(c_move_cost) + ccost:
+                    c_cards = [c]
+                    break
 
-        p_score = self._calc_clash_score(p_move, p_cards)
-        c_score = self._calc_clash_score(c_move, c_cards)
+        p_bonus = int(self.player.next_card_bonus)
+        c_bonus = int(self.cpu.next_card_bonus)
 
-        self._log_parts(
-            [("YOU ", "you"), (p_move, "move"), (f" [{p_score}]", "sys"), (self._cards_log_suffix(p_cards), "sys")]
-        )
-        self._log_parts(
-            [("CPU ", "cpu"), (c_move, "move"), (f" [{c_score}]", "sys"), (self._cards_log_suffix(c_cards), "sys")]
-        )
+        # Defensive does not score like a normal clash.
+        p_score = -1 if p_move == "Defensive" else self._calc_clash_score(p_move, p_cards, card_bonus=p_bonus)
+        c_score = -1 if c_move == "Defensive" else self._calc_clash_score(c_move, c_cards, card_bonus=c_bonus)
 
-        # Tie resolution:
-        # 1) Higher remaining deck strength wins
-        # 2) If also tied, run the PUSH/HOLD tie-break.
-        if p_score == c_score:
-            p_str = self.player.strength_current()
-            c_str = self.cpu.strength_current()
-            if p_str != c_str:
-                if p_str > c_str:
-                    self._log(f"TIE on score; YOU win by higher remaining strength ({p_str}>{c_str}).")
-                    winner, loser = self.player, self.cpu
-                    w_move, w_cards, w_score = p_move, p_cards, p_score
-                else:
-                    self._log(f"TIE on score; CPU wins by higher remaining strength ({c_str}>{p_str}).")
-                    winner, loser = self.cpu, self.player
-                    w_move, w_cards, w_score = c_move, c_cards, c_score
-            else:
-                # Hide the hand during the tie-break so PUSH/HOLD can't be covered.
-                self._set_hand_selecting(False)
-                hand_was_mapped = bool(self.hand_frame.winfo_ismapped())
-                if hand_was_mapped:
-                    try:
-                        self.hand_frame.pack_forget()
-                    except tk.TclError:
-                        hand_was_mapped = False
-                self._show_modal("Tie Break")
-                try:
-                    player_won = lockup_minigame(
-                        self.root,
-                        title="Tie Break",
-                        prompt="TIE! PUSH or HOLD to win the clash.",
-                        host=self.modal_content,
-                    )
-                finally:
-                    self._hide_modal()
-                    if hand_was_mapped:
-                        try:
-                            self.hand_frame.pack(fill="x", side="bottom", padx=8, pady=(0, self._safe_bottom))
-                        except tk.TclError:
-                            pass
-                if bool(player_won):
-                    winner, loser = self.player, self.cpu
-                    w_move, w_cards, w_score = p_move, p_cards, p_score
-                else:
-                    winner, loser = self.cpu, self.player
-                    w_move, w_cards, w_score = c_move, c_cards, c_score
+        if p_move == "Defensive":
+            p_pool = sum(int(c.value) for c in (p_cards or []))
+            p_score_txt = f" [DEF {p_pool}]"
+        else:
+            p_score_txt = f" [{p_score}]"
+
+        if c_move == "Defensive":
+            c_pool = sum(int(c.value) for c in (c_cards or []))
+            c_score_txt = f" [DEF {c_pool}]"
+        else:
+            c_score_txt = f" [{c_score}]"
+
+        self._log_parts([("YOU ", "you"), (p_move, "move"), (p_score_txt, "sys"), (self._cards_log_suffix(p_cards), "sys")])
+        self._log_parts([("CPU ", "cpu"), (c_move, "move"), (c_score_txt, "sys"), (self._cards_log_suffix(c_cards), "sys")])
+
+        # Outcome selection:
+        # - Defensive never wins.
+        # - If both non-defensive scores tie: Double Down (both take 5, reset neutral).
+        if p_move == "Defensive" and c_move == "Defensive":
+            self._log("Both fighters play it safe—no clean opening this beat.")
+            winner = loser = None
+            w_move = None
+            w_score = None
+        elif (p_move != "Defensive") and (c_move != "Defensive") and (p_score == c_score):
+            winner = loser = None
+            w_move = None
+            w_score = None
         elif p_score > c_score:
             winner, loser = self.player, self.cpu
-            w_move, w_cards, w_score = p_move, p_cards, p_score
+            w_move, w_score = p_move, p_score
         else:
             winner, loser = self.cpu, self.player
-            w_move, w_cards, w_score = c_move, c_cards, c_score
+            w_move, w_score = c_move, c_score
 
-        # Apply card-driven grit + discard/draw for both sides.
-        self.player.apply_grit_from_cards(p_cards, ignore_cost=ignore_p_cost)
+        # Spend grit for the move + apply card-driven economy (both sides pay for their attempt).
+        self.player.spend_grit(p_move_cost)
+        self.player.apply_grit_from_cards(p_cards, ignore_cost=ignore_p_card_cost)
         self.player.discard_cards(p_cards)
         self.player.draw_to_full()
 
-        self.cpu.apply_grit_from_cards(c_cards, ignore_cost=ignore_c_cost)
+        self.cpu.spend_grit(c_move_cost)
+        self.cpu.apply_grit_from_cards(c_cards, ignore_cost=ignore_c_card_cost)
         self.cpu.discard_cards(c_cards)
         self.cpu.draw_to_full()
 
-        # Execute the winning move.
-        self._execute_move(attacker=winner, defender=loser, move_name=w_move, allow_reaction=False, clash_score=w_score)
+        # Consume one-shot card bonuses.
+        self.player.next_card_bonus = 0
+        self.cpu.next_card_bonus = 0
 
-        # Utility moves that should still resolve when the winner did not deal damage
-        # (e.g., you should be able to stand up while the opponent taunts).
-        always_resolve = {"Rest", "Taunt", "Kip-up", "Slow Stand Up"}
-        winner_damage = int(MOVES.get(w_move, {}).get("damage", 0))
-
-        if winner_damage <= 0:
-            if winner is self.player:
-                loser_move_name = c_move
-                loser_attacker = self.cpu
-                loser_defender = self.player
+        # ------------------------------------------------------------------
+        # Single-beat resolution (Phase 2): exactly one primary outcome.
+        # Defensive is special: it never wins, but can cancel or soften.
+        # ------------------------------------------------------------------
+        if winner is None:
+            # Tie (Double Down) or both Defensive.
+            if (p_move != "Defensive") and (c_move != "Defensive") and (p_score == c_score):
+                self._log("DOUBLE DOWN! Both fighters collide and take 5 damage.")
+                self.player.take_damage(5)
+                self.cpu.take_damage(5)
+                self.player.clear_grapple()
+                self.cpu.clear_grapple()
+        else:
+            if p_move == "Defensive" and winner is self.cpu:
+                pool = sum(int(c.value) for c in (p_cards or []))
+                opp_score = int(c_score)
+                raw_dmg = int(MOVES.get(w_move, {}).get("damage", 0))
+                avoid_ok = (opp_score <= 10 and pool >= opp_score)
+                suppress_states = (opp_score <= 10 and pool >= max(1, opp_score - 2))
+                if avoid_ok:
+                    self._log(f"YOU defend ({pool}) and slip away from the attack!")
+                else:
+                    reduction = pool if opp_score <= 10 else (pool // 2)
+                    dmg_override = max(0, raw_dmg - max(0, reduction))
+                    if raw_dmg > 0 and dmg_override < raw_dmg:
+                        self._log(f"YOU defend ({pool}) and soften the blow ({raw_dmg}->{dmg_override}).")
+                    else:
+                        self._log(f"YOU defend ({pool}) but still get caught...")
+                    self._execute_move(
+                        attacker=winner,
+                        defender=loser,
+                        move_name=w_move,
+                        allow_reaction=False,
+                        clash_score=w_score,
+                        damage_override=dmg_override,
+                        suppress_state_changes=bool(suppress_states),
+                    )
+            elif c_move == "Defensive" and winner is self.player:
+                pool = sum(int(c.value) for c in (c_cards or []))
+                opp_score = int(p_score)
+                raw_dmg = int(MOVES.get(w_move, {}).get("damage", 0))
+                avoid_ok = (opp_score <= 10 and pool >= opp_score)
+                suppress_states = (opp_score <= 10 and pool >= max(1, opp_score - 2))
+                if avoid_ok:
+                    self._log(f"CPU defends ({pool}) and slips away from the attack!")
+                else:
+                    reduction = pool if opp_score <= 10 else (pool // 2)
+                    dmg_override = max(0, raw_dmg - max(0, reduction))
+                    if raw_dmg > 0 and dmg_override < raw_dmg:
+                        self._log(f"CPU defends ({pool}) and softens the blow ({raw_dmg}->{dmg_override}).")
+                    else:
+                        self._log(f"CPU defends ({pool}) but still gets caught...")
+                    self._execute_move(
+                        attacker=winner,
+                        defender=loser,
+                        move_name=w_move,
+                        allow_reaction=False,
+                        clash_score=w_score,
+                        damage_override=dmg_override,
+                        suppress_state_changes=bool(suppress_states),
+                    )
             else:
-                loser_move_name = p_move
-                loser_attacker = self.player
-                loser_defender = self.cpu
+                self._execute_move(attacker=winner, defender=loser, move_name=w_move, allow_reaction=False, clash_score=w_score)
 
-            if loser_move_name in always_resolve and self._move_is_legal(loser_move_name, loser_attacker, loser_defender):
-                self._execute_move(attacker=loser_attacker, defender=loser_defender, move_name=loser_move_name, allow_reaction=False)
+        # If the resolved move triggered an escape attempt, freeze here and let
+        # the defender play out the 3-card accumulative escape loop.
+        if self._escape_mode is not None:
+            self.selected_move_name = None
+            self._selected_card_idxs = set()
+            self._menu_stage = "ESCAPE"
+            self._selected_category = None
+            self._set_hand_selecting(True, hint="ESCAPE! Tap a card to discard.")
+            self._refresh_hand_ui()
+            self._update_hud()
+            self._refresh_player_buttons()
+            return
 
         # Reset UI for next clash.
         self.selected_move_name = None
         self._selected_card_idxs = set()
         self._set_hand_selecting(False)
+        self._menu_stage = "CATEGORIES"
+        self._selected_category = None
         self._refresh_hand_ui()
         self._update_hud()
         self._refresh_player_buttons()
 
-    # --- Finish / survival rules ---
+    # --- Finish / escape rules ---
     def _finisher_requirement(self, victim_hp_pct: float) -> int:
         # 100% HP -> 15 (needs very strong control)
         # 0% HP -> 6
@@ -1133,162 +1506,123 @@ class TacticalWrestlingApp:
         return max(6, min(15, int(v)))
 
     def _escape_threshold(self, victim_hp_pct: float) -> int:
-        # 100% HP -> 1 (easy escape)
-        # 0% HP -> 20 (hard escape)
-        v = 1 + int(round(19.0 * (1.0 - max(0.0, min(1.0, victim_hp_pct)))))
-        return max(1, min(20, int(v)))
+        # Master Prompt: 3-turn accumulative escape.
+        # Threshold formula: 1 + int(25 * (1 - hp_pct))
+        pct = max(0.0, min(1.0, float(victim_hp_pct)))
+        v = 1 + int(25.0 * (1.0 - pct))
+        return max(1, min(26, int(v)))
 
-    def _begin_survival(self, *, attacker: Wrestler, defender: Wrestler, kind: str) -> None:
+    def _begin_escape(self, *, attacker: Wrestler, defender: Wrestler, kind: str) -> None:
         threshold = self._escape_threshold(defender.hp_pct())
-        self._survival_mode = {
-            "kind": kind,
-            "threshold": threshold,
+        self._escape_mode = {
+            "kind": str(kind),
+            "threshold": int(threshold),
             "total": 0,
-            "tries_left": 3,
+            "plays_left": 3,
             "attacker_is_player": bool(attacker.is_player),
             "defender_is_player": bool(defender.is_player),
+            "attacker": attacker,
+            "defender": defender,
         }
 
-        if defender.is_player:
-            title = "Kick Out!" if kind == "PINFALL" else "Escape!"
-            self._show_modal(title)
-            self._survival_labels = {}
-            tk.Label(
-                self.modal_content,
-                text=f"{title} Discard cards to reach the escape total.",
-                fg="#f2f2f2",
-                bg="#0b0b0b",
-                font=("Arial", 11, "bold"),
-                justify="left",
-                anchor="w",
-            ).pack(fill="x", pady=(0, 6))
-
-            self._survival_labels["status"] = tk.Label(
-                self.modal_content,
-                text="",
-                fg="#aaa",
-                bg="#0b0b0b",
-                font=("Arial", 10),
-                justify="left",
-                anchor="w",
-            )
-            self._survival_labels["status"].pack(fill="x", pady=(0, 6))
-
-            tk.Label(
-                self.modal_content,
-                text="Pick 1 card (or doubles), then press SUBMIT. You redraw after each play.",
-                fg="#aaa",
-                bg="#0b0b0b",
-                font=("Arial", 9),
-                justify="left",
-                anchor="w",
-                wraplength=420,
-            ).pack(fill="x")
-
-            self._update_survival_labels()
-            self._refresh_player_buttons()
-            self._set_hand_selecting(True, hint=f"{title} Select cards to escape.")
-        else:
-            # CPU defending: simulate instantly.
-            success = self._cpu_survival(defender=defender, threshold=threshold)
-            if success:
-                self._log(f"CPU survives the {kind.lower()} attempt!")
-                self._survival_mode = None
-                self._survival_labels = {}
-            else:
-                self._end_match("YOU", kind)
-
-    def _update_survival_labels(self) -> None:
-        if not self._survival_mode:
-            return
-        if "status" not in self._survival_labels:
-            return
-        t = int(self._survival_mode["threshold"])
-        total = int(self._survival_mode["total"])
-        tries = int(self._survival_mode["tries_left"])
-        self._survival_labels["status"].config(text=f"Escape Total: {total}/{t}   |   Tries left: {tries}")
-
-    def _survival_submit(self) -> None:
-        if not self._survival_mode:
-            return
-        cards = self._selected_player_cards()
-        if not cards:
-            self._log("Select 1 card (or doubles).")
-            return
-        if not self.player.can_afford_cards(cards):
-            self._log("Not enough grit to play those card(s).")
-            return
-
-        gained = sum(int(c.value) for c in cards)
-        self.player.apply_grit_from_cards(cards)
-        self.player.discard_cards(cards)
-        self.player.draw_to_full()
-
-        self._survival_mode["total"] = int(self._survival_mode["total"]) + int(gained)
-        self._survival_mode["tries_left"] = int(self._survival_mode["tries_left"]) - 1
-
+        self._menu_stage = "ESCAPE"
+        self._selected_category = None
+        self.selected_move_name = None
         self._selected_card_idxs = set()
-        for w in getattr(self, "card_widgets", []):
-            w["selected"] = False
+
+        if defender.is_player:
+            self._log(f"{kind}! Tap 3 cards to escape (no redraw).")
+            self._set_hand_selecting(True, hint="ESCAPE! Tap a card to discard.")
+            self._refresh_hand_ui()
+            self._update_hud()
+            self._refresh_player_buttons()
+            return
+
+        # CPU defending: simulate instantly from current hand (no redraw).
+        success = self._cpu_escape(defender=defender, threshold=int(threshold))
+        if success:
+            self._log(f"CPU escapes the {kind.lower()} attempt!")
+            self._end_escape(success=True)
+        else:
+            winner = "YOU" if attacker.is_player else "CPU"
+            self._end_match(winner, str(kind))
+
+    def _escape_play_card(self, index: int) -> None:
+        if self.game_over:
+            return
+        if not self._escape_mode:
+            return
+        if not bool(self._escape_mode.get("defender_is_player")):
+            return
+
+        hand = list(self.player.hand or [])
+        if index < 0 or index >= len(hand):
+            return
+
+        card = hand[index]
+        gained = int(card.value)
+        self.player.discard_cards([card])
+
+        self._escape_mode["total"] = int(self._escape_mode.get("total", 0)) + gained
+        self._escape_mode["plays_left"] = int(self._escape_mode.get("plays_left", 0)) - 1
+
+        total = int(self._escape_mode.get("total", 0))
+        threshold = int(self._escape_mode.get("threshold", 1))
+        kind = str(self._escape_mode.get("kind", "ESCAPE"))
+
+        self._log(f"Escape discard: {gained} (total {total}/{threshold})")
         self._refresh_hand_ui()
 
-        if int(self._survival_mode["total"]) >= int(self._survival_mode["threshold"]):
-            kind = str(self._survival_mode.get("kind", "PINFALL"))
-            self._log(f"You survive the {kind.lower()} attempt!")
-            self._survival_mode = None
-            self._survival_labels = {}
-            self._hide_modal()
-            self._set_hand_selecting(False)
-            self._refresh_player_buttons()
+        if total >= threshold:
+            self._log(f"You escape the {kind.lower()} attempt!")
+            self._end_escape(success=True)
             return
 
-        if int(self._survival_mode["tries_left"]) <= 0:
-            kind = str(self._survival_mode.get("kind", "PINFALL"))
-            self._end_match("CPU", kind)
+        if int(self._escape_mode.get("plays_left", 0)) <= 0:
+            attacker_is_player = bool(self._escape_mode.get("attacker_is_player"))
+            winner = "YOU" if attacker_is_player else "CPU"
+            self._end_match(winner, kind)
             return
 
-        self._update_survival_labels()
-        self._set_hand_selecting(True)
+        self._update_move_list_ui()
+        self._update_hud()
 
-    def _cpu_survival(self, *, defender: Wrestler, threshold: int) -> bool:
-        total = 0
-        tries = 3
-        while tries > 0:
-            tries -= 1
+    def _end_escape(self, *, success: bool) -> None:
+        if not self._escape_mode:
+            return
+        attacker = self._escape_mode.get("attacker")
+        defender = self._escape_mode.get("defender")
+
+        if success and isinstance(attacker, Wrestler) and isinstance(defender, Wrestler):
+            attacker.clear_grapple()
+            defender.clear_grapple()
+            attacker.set_state(WrestlerState.STANDING)
+            defender.set_state(WrestlerState.STANDING)
+            attacker.draw_to_full()
             defender.draw_to_full()
+
+        self._escape_mode = None
+        self._menu_stage = "CATEGORIES"
+        self._selected_category = None
+        self._set_hand_selecting(False)
+        self._refresh_hand_ui()
+        self._update_hud()
+        self._refresh_player_buttons()
+
+    def _cpu_escape(self, *, defender: Wrestler, threshold: int) -> bool:
+        total = 0
+        plays = 3
+        while plays > 0:
+            plays -= 1
             hand = list(defender.hand or [])
             if not hand:
                 break
-
-            # Choose best single or doubles by value while respecting grit.
-            best_cards: list = []
-            best_sum = -1
-            for c in hand:
-                if defender.can_afford_cards([c]) and int(c.value) > best_sum:
-                    best_sum = int(c.value)
-                    best_cards = [c]
-
-            by_val: dict[int, list] = {}
-            for c in hand:
-                by_val.setdefault(int(c.value), []).append(c)
-            for v, cs in by_val.items():
-                if len(cs) >= 2:
-                    pair = [cs[0], cs[1]]
-                    if defender.can_afford_cards(pair) and (2 * v) > best_sum:
-                        best_sum = 2 * v
-                        best_cards = pair
-
-            if not best_cards:
-                best_cards = [hand[0]]
-
-            total += sum(int(c.value) for c in best_cards)
-            defender.apply_grit_from_cards(best_cards)
-            defender.discard_cards(best_cards)
-            defender.draw_to_full()
-
+            best = max(hand, key=lambda c: int(c.value))
+            total += int(best.value)
+            defender.discard_cards([best])
             if total >= int(threshold):
                 return True
-        return False
+        return total >= int(threshold)
 
     # --- Turn flow ---
     def _start_turn(self, who: str) -> None:
@@ -1306,12 +1640,59 @@ class TacticalWrestlingApp:
         self._selected_card_idxs = set()
         self._set_hand_selecting(False)
 
+        self._menu_stage = "CATEGORIES"
+        self._selected_category = None
+
         # Round banner.
         banner = "CLASH"
         if self._last_turn_banner != banner:
             self._last_turn_banner = banner
             self._log("".ljust(34, "-"))
             self._log_parts([("NEW CLASH", "move")])
+
+        self._refresh_hand_ui()
+        self._update_hud()
+        self._refresh_player_buttons()
+
+        # Soft-lock prevention: forced Gassed Out.
+        if int(self.player.grit) == 0 and (not self.player.has_low_card(max_value=5)):
+            self._resolve_gassed_out()
+
+    def _resolve_gassed_out(self) -> None:
+        """Forced action when the player has 0 grit and no playable low cards.
+
+        - Skip the beat (CPU gets the action)
+        - Regen 5 grit
+        - Take 50% extra damage if hit (next incoming hit only)
+        """
+        if self.game_over:
+            return
+
+        self._log("GASSED OUT! You can't find any cheap answers...")
+        self.player.next_damage_taken_multiplier = 1.5
+        self.player.grit = min(self.player.max_grit, int(self.player.grit) + 5)
+
+        c_move = self._cpu_choose_move()
+        c_cards = self._cpu_choose_cards(move_name=c_move)
+        c_move_cost = int(MOVES.get(c_move, {}).get("cost", 0))
+        ignore_c_card_cost = (c_move == "Rest")
+        c_card_cost = 0 if ignore_c_card_cost else sum(int(c.grit_cost()) for c in (c_cards or []))
+        if int(self.cpu.grit) < int(c_move_cost) + int(c_card_cost):
+            c_cards = []
+
+        c_bonus = int(self.cpu.next_card_bonus)
+        c_score = -1 if c_move == "Defensive" else self._calc_clash_score(c_move, c_cards, card_bonus=c_bonus)
+        self._log_parts([("CPU ", "cpu"), (c_move, "move"), (f" [{c_score}]", "sys"), (self._cards_log_suffix(c_cards), "sys")])
+
+        # Spend CPU costs and resolve.
+        self.cpu.spend_grit(c_move_cost)
+        self.cpu.apply_grit_from_cards(c_cards, ignore_cost=ignore_c_card_cost)
+        self.cpu.discard_cards(c_cards)
+        self.cpu.draw_to_full()
+        self.cpu.next_card_bonus = 0
+
+        if c_move != "Defensive":
+            self._execute_move(attacker=self.cpu, defender=self.player, move_name=c_move, allow_reaction=False, clash_score=c_score)
 
         self._refresh_hand_ui()
         self._update_hud()
@@ -1359,6 +1740,27 @@ class TacticalWrestlingApp:
     # --- CPU action ---
     def _cpu_choose_move(self) -> str:
         options = self._available_moves(self.cpu, self.player)
+        if not options:
+            return "Rest"
+
+        cpu_has_doubles = self.cpu.has_doubles_in_hand()
+
+        def affordable(name: str) -> bool:
+            mv = MOVES.get(name, {})
+            if bool(mv.get("is_finisher")) and (not cpu_has_doubles):
+                return False
+            move_cost = int(mv.get("cost", 0))
+            if name == "Defensive":
+                return int(self.cpu.grit) >= move_cost
+            ignore_card_cost = (name == "Rest")
+            # Any single playable card is enough.
+            for c in list(self.cpu.hand or []):
+                ccost = 0 if ignore_card_cost else int(c.grit_cost())
+                if int(self.cpu.grit) >= int(move_cost) + int(ccost):
+                    return True
+            return False
+
+        options = [o for o in options if affordable(o)]
         if not options:
             return "Rest"
 
@@ -1601,6 +2003,8 @@ class TacticalWrestlingApp:
         move_name: str,
         allow_reaction: bool = True,
         clash_score: int | None = None,
+        damage_override: int | None = None,
+        suppress_state_changes: bool = False,
     ) -> bool:
         """Execute the move's effects.
 
@@ -1670,7 +2074,7 @@ class TacticalWrestlingApp:
             self._update_hud()
             return False
 
-        # Pin/Submission trigger the Survival Loop (3 plays, redraw after each play).
+        # Pin/Submission trigger the Accumulative Escape Loop (3 discards, no redraw).
         if mtype in {"Pin", "Submission"}:
             needed = self._finisher_requirement(defender.hp_pct())
             had = int(clash_score or 0)
@@ -1680,12 +2084,12 @@ class TacticalWrestlingApp:
                 return False
 
             kind = "PINFALL" if mtype == "Pin" else "SUBMISSION"
-            self._begin_survival(attacker=attacker, defender=defender, kind=kind)
+            self._begin_escape(attacker=attacker, defender=defender, kind=kind)
             self._update_hud()
             return False
 
         # Damage
-        raw_damage = int(move.get("damage", 0))
+        raw_damage = int(move.get("damage", 0)) if damage_override is None else int(damage_override)
         if raw_damage > 0:
             defender.take_damage(raw_damage, target_part=str(move.get("target_part", "BODY")))
             dtag = "you" if defender.is_player else "cpu"
@@ -1695,10 +2099,11 @@ class TacticalWrestlingApp:
         attacker.add_hype(int(move.get("hype_gain", 0)))
 
         # State transitions
-        if "set_user_state" in move:
-            attacker.set_state(WrestlerState(move["set_user_state"]))
-        if "set_target_state" in move:
-            defender.set_state(WrestlerState(move["set_target_state"]))
+        if not suppress_state_changes:
+            if "set_user_state" in move:
+                attacker.set_state(WrestlerState(move["set_user_state"]))
+            if "set_target_state" in move:
+                defender.set_state(WrestlerState(move["set_target_state"]))
 
         # Grapple roles: when both are in a grapple tier, attacker is offense.
         if attacker.is_in_grapple() and defender.is_in_grapple():

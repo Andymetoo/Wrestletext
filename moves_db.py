@@ -13,6 +13,18 @@ MOVES: Dict[str, Move] = {
     # =========================================================================
     # UNIVERSAL / UTILITY
     # =========================================================================
+    "Defensive": {
+        "damage": 0,
+        "cost": 0,
+        "type": "Defensive",
+        "req_user_state": "ANY",
+        "req_target_state": "ANY",
+        "target_part": "NONE",
+        "hype_gain": 0,
+        "is_finisher": False,
+        "flavor_text": "You brace, slip away, and buy yourself a beat...",
+        "notes": "Phase 2: Special resolution. Discard up to 2 cards (<=5). Can never win a clash; used to survive pressure.",
+    },
     "Rest": {
         "damage": 0,
         "cost": 0,

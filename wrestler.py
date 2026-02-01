@@ -70,6 +70,9 @@ class Wrestler:
     # Card archetype (affects deck distribution)
     archetype: str = "BALANCED"  # "JOBBER" | "BALANCED" | "SUPERSTAR"
 
+    # AI personality
+    mistake_prob: float = 0.05
+
     # Character identity
     moveset: list[str] | None = None
     finisher: str | None = None
@@ -94,6 +97,10 @@ class Wrestler:
 
     # One-shot combat modifiers
     next_damage_multiplier: float = 1.0
+    next_damage_taken_multiplier: float = 1.0
+
+    # One-shot card modifier (Hype Shop)
+    next_card_bonus: int = 0
 
     # Card system
     deck: Deck | None = None
@@ -117,6 +124,31 @@ class Wrestler:
         # Phase 2: start at full grit.
         self.grit = int(self.max_grit)
         self.draw_to_full()
+
+        # AI personality defaults by archetype.
+        arch = str(self.archetype or "BALANCED").upper()
+        if arch == "JOBBER":
+            self.mistake_prob = 0.40
+        elif arch == "SUPERSTAR":
+            self.mistake_prob = 0.05
+        else:
+            self.mistake_prob = 0.15
+
+    def has_doubles_in_hand(self) -> bool:
+        if not self.hand:
+            return False
+        seen: set[int] = set()
+        for c in self.hand:
+            v = int(c.value)
+            if v in seen:
+                return True
+            seen.add(v)
+        return False
+
+    def has_low_card(self, *, max_value: int = 5) -> bool:
+        if not self.hand:
+            return False
+        return any(int(c.value) <= int(max_value) for c in self.hand)
 
     def strength_current(self) -> int:
         """Total remaining strength in the undealt pile + current hand.
@@ -216,6 +248,8 @@ class Wrestler:
         Limb damage is a scaled version of HP damage and is applied to the provided target_part.
         """
         amount = max(0, int(amount))
+        amount = int(round(amount * float(self.next_damage_taken_multiplier)))
+        self.next_damage_taken_multiplier = 1.0
         self.hp = max(0, self.hp - amount)
         if target_part in {"HEAD", "BODY", "LEGS"} and amount > 0:
             self.damage_limb(target_part, int(round(amount * limb_scale)))
