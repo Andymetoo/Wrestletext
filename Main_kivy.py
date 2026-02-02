@@ -58,13 +58,23 @@ COLOR_FINISHER = (0.83, 0.69, 0.22, 1)
 
 COLOR_HYPE_SHOP = (0.28, 0.17, 0.0, 1)
 
+# Card selection highlight (avoid using green; it conflicts with HP/log accents)
+COLOR_CARD_SELECTED = (1.00, 0.20, 0.75, 1)
+
+# ==========================================
+#  🎛️ TUNING KNOBS
+# ==========================================
+TUNING_ENABLE_PASSIVE_REGEN = True
+TUNING_GRIT_PASSIVE_REGEN = 2  # Grit recovered if you spent 0 this turn
+
 # ==========================================
 #  📏 DIMENSIONS & LAYOUT
 # ==========================================
 # Use dp() so the UI feels consistent across desktop and tall phones.
 
 # Fixed bars (header/footer pattern)
-HUD_HEIGHT = dp(100)
+# NOTE: HUD must be tall enough to fit HP + grit/hype meters without overlap.
+HUD_HEIGHT = dp(165)
 CONTROL_HEIGHT = dp(60)
 HAND_HEIGHT = dp(80)
 
@@ -141,14 +151,14 @@ class WrestleApp(App):
         self.root = root
 
         # 1. HUD (Top)
-        hud = BoxLayout(orientation='vertical', size_hint_y=None, height=HUD_HEIGHT, padding=PAD_SM, spacing=GAP_XS)
+        hud = BoxLayout(orientation='vertical', size_hint_y=None, height=HUD_HEIGHT, padding=PAD_SM, spacing=dp(5))
 
         self.state_label = Label(
             text="YOU: STANDING  |  CPU: STANDING",
             color=COLOR_TEXT_MAIN,
             size_hint_y=None,
-            height=dp(22),
-            font_size="13sp",
+            height=dp(20),
+            font_size="12sp",
             halign="left",
             valign="middle",
             shorten=True,
@@ -158,13 +168,35 @@ class WrestleApp(App):
         self.state_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, inst.height)))
         hud.add_widget(self.state_label)
         
-        hp_row = BoxLayout(orientation='horizontal', spacing=GAP_SM, size_hint_y=None, height=dp(42))
+        hp_row = BoxLayout(orientation='horizontal', spacing=GAP_SM, size_hint_y=None, height=dp(38))
         left_hp = BoxLayout(orientation='vertical')
         right_hp = BoxLayout(orientation='vertical')
-        self.player_hp_label = Label(text="YOU HP: 100", color=COLOR_HP_PLAYER, size_hint_y=None, height=dp(18))
-        self.cpu_hp_label = Label(text="CPU HP: 100", color=COLOR_HP_CPU, size_hint_y=None, height=dp(18))
-        self.player_hp_bar = ProgressBar(max=MAX_HEALTH, value=MAX_HEALTH)
-        self.cpu_hp_bar = ProgressBar(max=MAX_HEALTH, value=MAX_HEALTH)
+        self.player_hp_label = Label(
+            text="YOU HP: 100",
+            color=COLOR_HP_PLAYER,
+            size_hint_y=None,
+            height=dp(16),
+            halign="center",
+            valign="middle",
+            shorten=True,
+            shorten_from="right",
+            max_lines=1,
+        )
+        self.cpu_hp_label = Label(
+            text="CPU HP: 100",
+            color=COLOR_HP_CPU,
+            size_hint_y=None,
+            height=dp(16),
+            halign="center",
+            valign="middle",
+            shorten=True,
+            shorten_from="right",
+            max_lines=1,
+        )
+        self.player_hp_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
+        self.cpu_hp_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
+        self.player_hp_bar = ProgressBar(max=MAX_HEALTH, value=MAX_HEALTH, size_hint_y=None, height=dp(14))
+        self.cpu_hp_bar = ProgressBar(max=MAX_HEALTH, value=MAX_HEALTH, size_hint_y=None, height=dp(14))
         left_hp.add_widget(self.player_hp_label)
         left_hp.add_widget(self.player_hp_bar)
         right_hp.add_widget(self.cpu_hp_label)
@@ -172,7 +204,7 @@ class WrestleApp(App):
         hp_row.add_widget(left_hp)
         hp_row.add_widget(right_hp)
         
-        meters_row = BoxLayout(orientation='horizontal', spacing=dp(10))
+        meters_row = BoxLayout(orientation='horizontal', spacing=dp(10), size_hint_y=None, height=dp(82))
 
         purple = get_color_from_hex(COLOR_HEX_GRIT)
         orange = get_color_from_hex(COLOR_HEX_HYPE)
@@ -183,38 +215,38 @@ class WrestleApp(App):
             text=f"[color={COLOR_HEX_GRIT}]GRIT 0/0[/color]",
             markup=True,
             size_hint_y=None,
-            height=dp(18),
-            halign="left",
+            height=dp(16),
+            halign="center",
             valign="middle",
-            font_size="12sp",
+            font_size="11sp",
             shorten=True,
             shorten_from="right",
             max_lines=1,
         )
-        self.p_grit_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, inst.height)))
-        self.p_grit_bar = ColoredBar(size_hint_y=None, height=10, max_value=self.player.max_grit, value=self.player.grit, bar_color=purple)
+        self.p_grit_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
+        self.p_grit_bar = ColoredBar(size_hint_y=None, height=dp(8), max_value=self.player.max_grit, value=self.player.grit, bar_color=purple)
         self.p_hype_label = Label(
             text=f"[color={COLOR_HEX_HYPE}]HYPE 0/100[/color]",
             markup=True,
             size_hint_y=None,
-            height=dp(18),
-            halign="left",
+            height=dp(16),
+            halign="center",
             valign="middle",
-            font_size="12sp",
+            font_size="11sp",
             shorten=True,
             shorten_from="right",
             max_lines=1,
         )
-        self.p_hype_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, inst.height)))
-        self.p_hype_bar = ColoredBar(size_hint_y=None, height=10, max_value=100, value=self.player.hype, bar_color=orange)
+        self.p_hype_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
+        self.p_hype_bar = ColoredBar(size_hint_y=None, height=dp(8), max_value=100, value=self.player.hype, bar_color=orange)
         self.p_nums = Label(
             text="",
             color=COLOR_TEXT_MUTED,
             size_hint_y=None,
-            height=dp(16),
+            height=dp(12),
             halign="left",
             valign="middle",
-            font_size="11sp",
+            font_size="10sp",
             shorten=True,
             shorten_from="right",
             max_lines=1,
@@ -224,10 +256,10 @@ class WrestleApp(App):
             text="",
             color=COLOR_TEXT_MUTED,
             size_hint_y=None,
-            height=dp(16),
+            height=dp(12),
             halign="left",
             valign="middle",
-            font_size="11sp",
+            font_size="10sp",
             shorten=True,
             shorten_from="right",
             max_lines=1,
@@ -247,38 +279,38 @@ class WrestleApp(App):
             text=f"[color={COLOR_HEX_GRIT}]GRIT 0/0[/color]",
             markup=True,
             size_hint_y=None,
-            height=dp(18),
-            halign="left",
+            height=dp(16),
+            halign="center",
             valign="middle",
-            font_size="12sp",
+            font_size="11sp",
             shorten=True,
             shorten_from="right",
             max_lines=1,
         )
-        self.c_grit_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, inst.height)))
-        self.c_grit_bar = ColoredBar(size_hint_y=None, height=10, max_value=self.cpu.max_grit, value=self.cpu.grit, bar_color=purple)
+        self.c_grit_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
+        self.c_grit_bar = ColoredBar(size_hint_y=None, height=dp(8), max_value=self.cpu.max_grit, value=self.cpu.grit, bar_color=purple)
         self.c_hype_label = Label(
             text=f"[color={COLOR_HEX_HYPE}]HYPE 0/100[/color]",
             markup=True,
             size_hint_y=None,
-            height=dp(18),
-            halign="left",
+            height=dp(16),
+            halign="center",
             valign="middle",
-            font_size="12sp",
+            font_size="11sp",
             shorten=True,
             shorten_from="right",
             max_lines=1,
         )
-        self.c_hype_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, inst.height)))
-        self.c_hype_bar = ColoredBar(size_hint_y=None, height=10, max_value=100, value=self.cpu.hype, bar_color=orange)
+        self.c_hype_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
+        self.c_hype_bar = ColoredBar(size_hint_y=None, height=dp(8), max_value=100, value=self.cpu.hype, bar_color=orange)
         self.c_nums = Label(
             text="",
             color=COLOR_TEXT_MUTED,
             size_hint_y=None,
-            height=dp(16),
+            height=dp(12),
             halign="left",
             valign="middle",
-            font_size="11sp",
+            font_size="10sp",
             shorten=True,
             shorten_from="right",
             max_lines=1,
@@ -288,10 +320,10 @@ class WrestleApp(App):
             text="",
             color=COLOR_TEXT_MUTED,
             size_hint_y=None,
-            height=dp(16),
+            height=dp(12),
             halign="left",
             valign="middle",
-            font_size="11sp",
+            font_size="10sp",
             shorten=True,
             shorten_from="right",
             max_lines=1,
@@ -478,13 +510,25 @@ class WrestleApp(App):
         ru = str(mv.get("req_user_state", "ANY"))
         rt = str(mv.get("req_target_state", "ANY"))
 
-        if ru != "ANY":
+        # --- 1) User requirement (state + grapple role) ---
+        if ru == "GRAPPLE_DEFENSE":
+            if not (user.is_in_grapple() and user.grapple_role == GrappleRole.DEFENSE):
+                return False
+        elif ru == "GRAPPLE_OFFENSE":
+            if not (user.is_in_grapple() and user.grapple_role == GrappleRole.OFFENSE):
+                return False
+        elif ru != "ANY":
             if ru in {"GRAPPLED", "GRAPPLE_ANY"}:
                 if not user.is_in_grapple():
+                    return False
+            elif ru == "GRAPPLE_WEAK":
+                # Allow certain "weak" grapple moves in STRONG as well.
+                if user.state not in {WrestlerState.GRAPPLE_WEAK, WrestlerState.GRAPPLE_STRONG}:
                     return False
             elif user.state.value != ru:
                 return False
 
+        # --- 2) Target requirement ---
         if rt != "ANY":
             if rt in {"GRAPPLED", "GRAPPLE_ANY"}:
                 if not target.is_in_grapple():
@@ -492,11 +536,15 @@ class WrestleApp(App):
             elif target.state.value != rt:
                 return False
 
+        # --- 3) Move-cost gating (card cost handled separately) ---
+        if int(user.grit) < int(mv.get("cost", 0)):
+            return False
+
         user_adv = user.is_in_grapple() and (user.grapple_role == GrappleRole.OFFENSE)
         user_dis = user.is_in_grapple() and (user.grapple_role == GrappleRole.DEFENSE)
 
         if user_dis:
-            if move_name not in {"Fight For Control", "Defensive", "Rest", "Shove Off"}:
+            if move_name not in {"Fight For Control", "Defensive", "Rest", "Shove Off", "Desperation Punch", "Bite"}:
                 return False
 
         if move_name == "Defensive":
@@ -593,6 +641,11 @@ class WrestleApp(App):
         p_ignore_cards = (p_move == "Rest")
         c_ignore_cards = (c_move == "Rest")
 
+        p_card_spent = 0 if p_ignore_cards else sum(int(c.grit_cost()) for c in (p_cards or []))
+        c_card_spent = 0 if c_ignore_cards else sum(int(c.grit_cost()) for c in (c_cards or []))
+        p_total_spent = int(p_move_cost) + int(p_card_spent)
+        c_total_spent = int(c_move_cost) + int(c_card_spent)
+
         p_bonus = int(self.player.next_card_bonus)
         c_bonus = int(self.cpu.next_card_bonus)
 
@@ -652,6 +705,10 @@ class WrestleApp(App):
             if str(w_move) in {"Taunt", "Rest"} and loser_type not in {"Setup", "Defensive"}:
                 self._log(f"{winner.name} dodges effortlessly while {loser.name} wastes the beat.")
 
+            passive_winner = str(w_move) in {"Taunt", "Rest"}
+            positioning_loser = str(loser_move) in {"Slow Stand Up", "Kip-up", "Climb Down", "Stop Short", "Shove Off"}
+            run_loser_after = bool(passive_winner and positioning_loser)
+
             # Defensive cancel/soften
             if (p_move == "Defensive" and winner is self.cpu) or (c_move == "Defensive" and winner is self.player):
                 defender_cards = p_cards if p_move == "Defensive" else c_cards
@@ -670,6 +727,23 @@ class WrestleApp(App):
                     self._execute_move(attacker=winner, defender=loser, move_name=w_move, clash_score=w_score, damage_override=dmg_override, suppress_state_changes=bool(suppress_states))
             else:
                 self._execute_move(attacker=winner, defender=loser, move_name=w_move, clash_score=w_score)
+
+            if run_loser_after:
+                self._execute_move(attacker=loser, defender=winner, move_name=str(loser_move), damage_override=0)
+
+        if TUNING_ENABLE_PASSIVE_REGEN:
+            if int(p_total_spent) == 0:
+                before = int(self.player.grit)
+                self.player.grit = min(self.player.max_grit, int(self.player.grit) + int(TUNING_GRIT_PASSIVE_REGEN))
+                gained = int(self.player.grit) - before
+                if gained > 0:
+                    self._log(f"YOU: Passive Regen (+{gained} Grit).")
+            if int(c_total_spent) == 0:
+                before = int(self.cpu.grit)
+                self.cpu.grit = min(self.cpu.max_grit, int(self.cpu.grit) + int(TUNING_GRIT_PASSIVE_REGEN))
+                gained = int(self.cpu.grit) - before
+                if gained > 0:
+                    self._log(f"CPU: Passive Regen (+{gained} Grit).")
 
         self._update_hud()
 
@@ -1003,6 +1077,9 @@ class WrestleApp(App):
                 background_color=bg, background_normal="",
                 font_size='18sp', bold=True
             )
+            btn.base_bg = bg
+            if i in self.selected_cards:
+                btn.background_color = COLOR_CARD_SELECTED
             btn.card_index = i 
             btn.bind(on_release=self._on_card_click)
             self.hand_layout.add_widget(btn)
@@ -1072,6 +1149,19 @@ class WrestleApp(App):
 
         # Categories
         if self._menu_stage == "CATEGORIES":
+            if self.player.state == WrestlerState.STANDING:
+                lock_btn = Button(
+                    text="[b]LOCK UP[/b]",
+                    markup=True,
+                    size_hint_x=1,
+                    size_hint_y=None,
+                    height=BTN_HEIGHT_CATEGORY,
+                    background_normal="",
+                    background_color=COLOR_BTN_BASE,
+                )
+                lock_btn.bind(on_release=lambda _inst=None: self._do_lock_up())
+                self.move_list_layout.add_widget(lock_btn)
+
             buttons: list[tuple[str, str]] = [
                 ("STRIKES", "STRIKES"),
                 ("GRAPPLES", "GRAPPLES"),
@@ -1208,11 +1298,12 @@ class WrestleApp(App):
                 dmg = int(mv.get('damage', 0))
                 mc = int(mv.get('cost', 0))
                 if name == "Defensive":
-                    label = f"{star}{name}\nDiscard (≤5) to Block"
+                    label = f"[b]{star}{name}[/b]\n[size=13sp]Discard (≤5) to Block[/size]"
                 else:
-                    label = f"{star}{name}\n{dmg} Dmg | {mc} Move"
+                    label = f"[b]{star}{name}[/b]\n[size=13sp]{dmg} DMG | [color={COLOR_HEX_GRIT}]{mc} GRIT[/color][/size]"
                 btn = Button(
                     text=label,
+                    markup=True,
                     size_hint_y=None,
                     height=BTN_HEIGHT_MOVE,
                     background_normal="",
@@ -1236,6 +1327,7 @@ class WrestleApp(App):
 
         self.selected_move = name
         self.selected_cards.clear()
+        self._render_hand()
         self._update_play_button()
 
     def _do_lock_up(self) -> None:
@@ -1283,10 +1375,12 @@ class WrestleApp(App):
 
         root = BoxLayout(orientation="horizontal", spacing=10, padding=[12, 12, 12, 12])
         left = BoxLayout(orientation="vertical", spacing=8)
-        right = BoxLayout(orientation="vertical", spacing=8, size_hint_x=0.35)
+        right = BoxLayout(orientation="vertical", spacing=8, size_hint_x=0.30)
 
         prompt = Label(
             text="LOCK UP\nGet closer to 15 without going over.",
+            size_hint_y=None,
+            height=dp(52),
             halign="left",
             valign="middle",
             color=COLOR_TEXT_PROMPT,
@@ -1295,6 +1389,8 @@ class WrestleApp(App):
 
         status = Label(
             text="YOU: 0   |   CPU: 0",
+            size_hint_y=None,
+            height=dp(24),
             color=COLOR_TEXT_SOFT,
             halign="left",
             valign="middle",
@@ -1303,6 +1399,8 @@ class WrestleApp(App):
 
         msg = Label(
             text="PUSH adds 1–6. HOLD lets CPU respond.",
+            size_hint_y=None,
+            height=dp(70),
             color=COLOR_TEXT_HINT,
             halign="left",
             valign="top",
@@ -1315,7 +1413,7 @@ class WrestleApp(App):
         root.add_widget(left)
         root.add_widget(right)
 
-        pop = Popup(title="Lock Up", content=root, size_hint=(0.92, 0.38), auto_dismiss=False)
+        pop = Popup(title="Lock Up", content=root, size_hint=(0.92, 0.45), auto_dismiss=False)
 
         def refresh() -> None:
             status.text = f"YOU: {scores['p']}   |   CPU: {scores['c']}"
@@ -1405,7 +1503,10 @@ class WrestleApp(App):
 
         if idx in self.selected_cards:
             self.selected_cards.remove(idx)
-            instance.opacity = 1.0
+            base = getattr(instance, "base_bg", None)
+            if base is None:
+                base = list(instance.background_color)
+            instance.background_color = base
         else:
             if len(self.selected_cards) >= 2:
                 self._log("Max 2 cards.")
@@ -1424,7 +1525,7 @@ class WrestleApp(App):
                     return
 
             self.selected_cards.add(idx)
-            instance.opacity = 0.55
+            instance.background_color = COLOR_CARD_SELECTED
 
         self._update_play_button()
 
@@ -1550,6 +1651,7 @@ class WrestleApp(App):
     def _on_return_click(self, instance):
         self.selected_move = None
         self.selected_cards.clear()
+        self._render_hand()
         self._set_menu_stage("CATEGORIES")
 
     # -------------------------------------------------------------------------
