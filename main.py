@@ -414,7 +414,8 @@ class TacticalWrestlingApp:
         cards = self._selected_player_cards()
         if move_name:
             if move_name == "Defensive":
-                enabled = self._hand_selecting and (selected_count in {0, 1, 2})
+                # Defensive may discard 0..2, but any selected cards must still be legal (<=5).
+                enabled = self._hand_selecting and (selected_count in {0, 1, 2}) and (selected_count == 0 or bool(cards))
             else:
                 enabled = self._hand_selecting and (selected_count in {1, 2}) and bool(cards)
 
