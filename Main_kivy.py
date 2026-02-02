@@ -58,9 +58,18 @@ COLOR_FINISHER = (0.83, 0.69, 0.22, 1)
 COLOR_HYPE_SHOP = (0.28, 0.17, 0.0, 1)
 
 # DIMENSIONS (Size Hints vs Fixed Pixels)
-HUD_HEIGHT_PCT  = 0.15  # Top HUD takes 15% of screen height
-HAND_HEIGHT_PCT = 0.12  # Hand takes 12% of screen height
-BTN_HEIGHT_PX   = 60    # Move buttons are 60 pixels tall
+# (Set to current defaults so changing these is easy and predictable.)
+HUD_HEIGHT_PCT = 0.22
+ARENA_HEIGHT_PCT = 0.62
+CONTROLS_HEIGHT_PCT = 0.10
+HAND_HEIGHT_PCT = 0.10
+
+ARENA_LOG_PCT = 0.30
+ARENA_MOVES_PCT = 0.70
+
+BTN_HEIGHT_CATEGORY_PX = 64
+BTN_HEIGHT_MOVE_PX = 74
+BTN_HEIGHT_SHOP_PX = 78
 
 class ColoredBar(Widget):
     """Simple colored meter bar (avoids theme limitations of ProgressBar)."""
@@ -120,7 +129,7 @@ class WrestleApp(App):
         self.root = root
 
         # 1. HUD (Top)
-        hud = BoxLayout(orientation='vertical', size_hint_y=0.22, padding=6, spacing=4)
+        hud = BoxLayout(orientation='vertical', size_hint_y=HUD_HEIGHT_PCT, padding=6, spacing=4)
 
         self.state_label = Label(
             text="YOU: STANDING  |  CPU: STANDING",
@@ -291,10 +300,10 @@ class WrestleApp(App):
         hud.add_widget(meters_row)
 
         # 2. ARENA (Middle)
-        arena_box = BoxLayout(orientation='vertical', size_hint_y=0.62)
+        arena_box = BoxLayout(orientation='vertical', size_hint_y=ARENA_HEIGHT_PCT)
         
         # A. Game Log (Top of Arena)
-        self.log_scroll = ScrollView(size_hint_y=0.3)
+        self.log_scroll = ScrollView(size_hint_y=ARENA_LOG_PCT)
         self.log_scroll.do_scroll_x = False
         self.log_layout = BoxLayout(orientation='vertical', size_hint_y=None, padding=6, spacing=2)
         self.log_layout.bind(minimum_height=self.log_layout.setter('height'))
@@ -303,7 +312,7 @@ class WrestleApp(App):
         arena_box.add_widget(self.log_scroll)
 
         # B. Move List (Bottom of Arena) — 3-column grid for mobile density
-        self.move_scroll = ScrollView(size_hint_y=0.7)
+        self.move_scroll = ScrollView(size_hint_y=ARENA_MOVES_PCT)
         self.move_list_layout = GridLayout(cols=3, spacing=6, padding=[10, 10, 10, 10], size_hint_y=None)
         self.move_list_layout.bind(minimum_height=self.move_list_layout.setter('height'))
         self.move_scroll.add_widget(self.move_list_layout)
@@ -313,7 +322,7 @@ class WrestleApp(App):
         root.add_widget(arena_box)
 
         # 3. CONTROL BAR
-        controls = BoxLayout(orientation='horizontal', size_hint_y=0.10, spacing=8, padding=[8, 6, 8, 6])
+        controls = BoxLayout(orientation='horizontal', size_hint_y=CONTROLS_HEIGHT_PCT, spacing=8, padding=[8, 6, 8, 6])
         
         self.return_btn = Button(
             text="< RETURN",
@@ -348,7 +357,7 @@ class WrestleApp(App):
         root.add_widget(controls)
 
         # 4. HAND (Bottom)
-        self.hand_layout = BoxLayout(orientation='horizontal', size_hint_y=0.10, spacing=4, padding=[6, 4, 6, 6])
+        self.hand_layout = BoxLayout(orientation='horizontal', size_hint_y=HAND_HEIGHT_PCT, spacing=4, padding=[6, 4, 6, 6])
         root.add_widget(self.hand_layout)
 
         # Initial Start
@@ -1087,7 +1096,7 @@ class WrestleApp(App):
                     markup=True,
                     size_hint_x=1,
                     size_hint_y=None,
-                    height=64,
+                    height=BTN_HEIGHT_CATEGORY_PX,
                     background_normal="",
                     background_color=bg,
                 )
@@ -1128,9 +1137,9 @@ class WrestleApp(App):
                 self._render_moves_ui()
                 self._update_control_bar()
 
-            b1 = Button(text="Pump Up\n(25 Hype): Next card +1", size_hint_y=None, height=78, background_normal="", background_color=COLOR_BTN_BASE)
-            b2 = Button(text="Adrenaline\n(50 Hype): Next card +2", size_hint_y=None, height=78, background_normal="", background_color=COLOR_BTN_BASE)
-            b3 = Button(text="Second Wind\n(80 Hype): Heal 15 HP", size_hint_y=None, height=78, background_normal="", background_color=COLOR_BTN_BASE)
+            b1 = Button(text="Pump Up\n(25 Hype): Next card +1", size_hint_y=None, height=BTN_HEIGHT_SHOP_PX, background_normal="", background_color=COLOR_BTN_BASE)
+            b2 = Button(text="Adrenaline\n(50 Hype): Next card +2", size_hint_y=None, height=BTN_HEIGHT_SHOP_PX, background_normal="", background_color=COLOR_BTN_BASE)
+            b3 = Button(text="Second Wind\n(80 Hype): Heal 15 HP", size_hint_y=None, height=BTN_HEIGHT_SHOP_PX, background_normal="", background_color=COLOR_BTN_BASE)
             b1.disabled = self.player.hype < 25
             b2.disabled = self.player.hype < 50
             b3.disabled = self.player.hype < 80
@@ -1193,7 +1202,7 @@ class WrestleApp(App):
                 btn = Button(
                     text=label,
                     size_hint_y=None,
-                    height=74,
+                    height=BTN_HEIGHT_MOVE_PX,
                     background_normal="",
                     background_color=bg,
                 )
