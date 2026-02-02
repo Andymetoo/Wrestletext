@@ -17,6 +17,50 @@ import random
 from wrestler import Wrestler, WrestlerState, GrappleRole, MAX_HEALTH
 from moves_db import MOVES
 
+# ==========================================
+#  🎨 THEME & TUNING (Tinker Here!)
+# ==========================================
+
+# COLORS (R, G, B, A) - 0.0 to 1.0
+COLOR_BG_MAIN   = (0.06, 0.06, 0.06, 1)   # Almost Black
+COLOR_BTN_BASE  = (0.15, 0.15, 0.15, 1)   # Dark Grey Buttons
+COLOR_TEXT_MAIN = (1, 1, 1, 1)            # White Text
+
+# Common text tones
+COLOR_TEXT_SOFT = (0.90, 0.90, 0.90, 1)
+COLOR_TEXT_HINT = (0.75, 0.75, 0.75, 1)
+COLOR_TEXT_MUTED = (0.72, 0.72, 0.72, 1)
+COLOR_TEXT_PROMPT = (0.95, 0.95, 0.95, 1)
+
+# Accent + HUD
+COLOR_LOG_TEXT = (0.8, 1, 0.8, 1)
+COLOR_HP_PLAYER = (0.25, 1, 0.25, 1)
+COLOR_HP_CPU = (1, 0.25, 0.25, 1)
+
+# Kivy markup + bar colors
+COLOR_HEX_GRIT = "bb86fc"
+COLOR_HEX_HYPE = "ff9800"
+
+# Control bar accents
+COLOR_HEX_RETURN = "#6200ea"
+COLOR_HEX_PLAY_ENABLED = "#00c853"
+COLOR_HEX_PLAY_DISABLED = "#444444"
+
+# TYPE COLORS (Used for button hints)
+COLOR_STRIKE    = (0.40, 0.05, 0.05, 1)   # Dark Red
+COLOR_GRAPPLE   = (0.05, 0.05, 0.40, 1)   # Dark Blue
+COLOR_AERIAL    = (0.40, 0.40, 0.05, 1)   # Dark Yellow
+COLOR_SUBMIT    = (0.05, 0.40, 0.05, 1)   # Dark Green
+
+COLOR_DEFENSIVE = (0.10, 0.10, 0.10, 1)
+COLOR_FINISHER = (0.83, 0.69, 0.22, 1)
+
+COLOR_HYPE_SHOP = (0.28, 0.17, 0.0, 1)
+
+# DIMENSIONS (Size Hints vs Fixed Pixels)
+HUD_HEIGHT_PCT  = 0.15  # Top HUD takes 15% of screen height
+HAND_HEIGHT_PCT = 0.12  # Hand takes 12% of screen height
+BTN_HEIGHT_PX   = 60    # Move buttons are 60 pixels tall
 
 class ColoredBar(Widget):
     """Simple colored meter bar (avoids theme limitations of ProgressBar)."""
@@ -56,7 +100,7 @@ class ColoredBar(Widget):
 
 class WrestleApp(App):
     def build(self):
-        Window.clearcolor = (0.06, 0.06, 0.06, 1)
+        Window.clearcolor = COLOR_BG_MAIN
 
         # --- Game Objects ---
         self.player = Wrestler("YOU", True)
@@ -80,7 +124,7 @@ class WrestleApp(App):
 
         self.state_label = Label(
             text="YOU: STANDING  |  CPU: STANDING",
-            color=(0.90, 0.90, 0.90, 1),
+            color=COLOR_TEXT_MAIN,
             size_hint_y=None,
             height=22,
             font_size="13sp",
@@ -96,8 +140,8 @@ class WrestleApp(App):
         hp_row = BoxLayout(orientation='horizontal', spacing=8, size_hint_y=None, height=42)
         left_hp = BoxLayout(orientation='vertical')
         right_hp = BoxLayout(orientation='vertical')
-        self.player_hp_label = Label(text="YOU HP: 100", color=(0.25, 1, 0.25, 1), size_hint_y=None, height=18)
-        self.cpu_hp_label = Label(text="CPU HP: 100", color=(1, 0.25, 0.25, 1), size_hint_y=None, height=18)
+        self.player_hp_label = Label(text="YOU HP: 100", color=COLOR_HP_PLAYER, size_hint_y=None, height=18)
+        self.cpu_hp_label = Label(text="CPU HP: 100", color=COLOR_HP_CPU, size_hint_y=None, height=18)
         self.player_hp_bar = ProgressBar(max=MAX_HEALTH, value=MAX_HEALTH)
         self.cpu_hp_bar = ProgressBar(max=MAX_HEALTH, value=MAX_HEALTH)
         left_hp.add_widget(self.player_hp_label)
@@ -109,13 +153,13 @@ class WrestleApp(App):
         
         meters_row = BoxLayout(orientation='horizontal', spacing=10)
 
-        purple = get_color_from_hex("#bb86fc")
-        orange = get_color_from_hex("#ff9800")
+        purple = get_color_from_hex(COLOR_HEX_GRIT)
+        orange = get_color_from_hex(COLOR_HEX_HYPE)
 
         # Player meters (left)
         p_box = BoxLayout(orientation='vertical', spacing=2)
         self.p_grit_label = Label(
-            text="[color=bb86fc]GRIT 0/0[/color]",
+            text=f"[color={COLOR_HEX_GRIT}]GRIT 0/0[/color]",
             markup=True,
             size_hint_y=None,
             height=18,
@@ -129,7 +173,7 @@ class WrestleApp(App):
         self.p_grit_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, inst.height)))
         self.p_grit_bar = ColoredBar(size_hint_y=None, height=10, max_value=self.player.max_grit, value=self.player.grit, bar_color=purple)
         self.p_hype_label = Label(
-            text="[color=ff9800]HYPE 0/100[/color]",
+            text=f"[color={COLOR_HEX_HYPE}]HYPE 0/100[/color]",
             markup=True,
             size_hint_y=None,
             height=18,
@@ -144,7 +188,7 @@ class WrestleApp(App):
         self.p_hype_bar = ColoredBar(size_hint_y=None, height=10, max_value=100, value=self.player.hype, bar_color=orange)
         self.p_nums = Label(
             text="",
-            color=(0.72, 0.72, 0.72, 1),
+            color=COLOR_TEXT_MUTED,
             size_hint_y=None,
             height=16,
             halign="left",
@@ -157,7 +201,7 @@ class WrestleApp(App):
         self.p_nums.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, inst.height)))
         self.p_limbs = Label(
             text="",
-            color=(0.72, 0.72, 0.72, 1),
+            color=COLOR_TEXT_MUTED,
             size_hint_y=None,
             height=16,
             halign="left",
@@ -179,7 +223,7 @@ class WrestleApp(App):
         # CPU meters (right)
         c_box = BoxLayout(orientation='vertical', spacing=2)
         self.c_grit_label = Label(
-            text="[color=bb86fc]GRIT 0/0[/color]",
+            text=f"[color={COLOR_HEX_GRIT}]GRIT 0/0[/color]",
             markup=True,
             size_hint_y=None,
             height=18,
@@ -193,7 +237,7 @@ class WrestleApp(App):
         self.c_grit_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, inst.height)))
         self.c_grit_bar = ColoredBar(size_hint_y=None, height=10, max_value=self.cpu.max_grit, value=self.cpu.grit, bar_color=purple)
         self.c_hype_label = Label(
-            text="[color=ff9800]HYPE 0/100[/color]",
+            text=f"[color={COLOR_HEX_HYPE}]HYPE 0/100[/color]",
             markup=True,
             size_hint_y=None,
             height=18,
@@ -208,7 +252,7 @@ class WrestleApp(App):
         self.c_hype_bar = ColoredBar(size_hint_y=None, height=10, max_value=100, value=self.cpu.hype, bar_color=orange)
         self.c_nums = Label(
             text="",
-            color=(0.72, 0.72, 0.72, 1),
+            color=COLOR_TEXT_MUTED,
             size_hint_y=None,
             height=16,
             halign="left",
@@ -221,7 +265,7 @@ class WrestleApp(App):
         self.c_nums.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, inst.height)))
         self.c_limbs = Label(
             text="",
-            color=(0.72, 0.72, 0.72, 1),
+            color=COLOR_TEXT_MUTED,
             size_hint_y=None,
             height=16,
             halign="left",
@@ -273,7 +317,7 @@ class WrestleApp(App):
         
         self.return_btn = Button(
             text="< RETURN",
-            background_color=get_color_from_hex("#6200ea"),
+            background_color=get_color_from_hex(COLOR_HEX_RETURN),
             background_normal="",
             disabled=True,
             opacity=0,
@@ -283,7 +327,7 @@ class WrestleApp(App):
 
         self.hint_label = Label(
             text="Pick a category.",
-            color=(0.75, 0.75, 0.75, 1),
+            color=COLOR_TEXT_HINT,
             halign="left",
             valign="middle",
         )
@@ -291,7 +335,7 @@ class WrestleApp(App):
 
         self.play_btn = Button(
             text="PLAY\n(0 Grit)",
-            background_color=get_color_from_hex("#00c853"),
+            background_color=get_color_from_hex(COLOR_HEX_PLAY_ENABLED),
             background_normal="",
             disabled=True,
             size_hint_x=0.30,
@@ -365,7 +409,7 @@ class WrestleApp(App):
             size_hint_y=None,
             halign="left",
             valign="top",
-            color=(0.8, 1, 0.8, 1),
+            color=COLOR_LOG_TEXT,
         )
 
         def refresh_wrap(*_a) -> None:
@@ -787,20 +831,31 @@ class WrestleApp(App):
     # HELPER LOGIC
     # -------------------------------------------------------------------------
 
+    def _cpu_buy_buffs(self) -> None:
+        """Spend CPU hype on buffs before selecting a move."""
+        if self.game_over:
+            return
+        if int(self.cpu.hype) < 25:
+            return
+
+        # Simple parity behavior: choose between Pump (+1) and Adrenaline (+2).
+        # Kept probabilistic so CPU doesn't always auto-buy.
+        if int(self.cpu.hype) >= 50 and random.random() < 0.15:
+            self.cpu.hype -= 50
+            self.cpu.next_card_bonus = max(int(self.cpu.next_card_bonus), 2)
+            self._log("CPU uses the crowd energy! (Adrenaline +2 next card)")
+            return
+
+        if int(self.cpu.hype) >= 25 and random.random() < 0.20:
+            self.cpu.hype -= 25
+            self.cpu.next_card_bonus = max(int(self.cpu.next_card_bonus), 1)
+            self._log("CPU digs deep! (Pump Up +1 next card)")
+            return
+
     def _cpu_choose_move(self):
         valid = self._available_moves(self.cpu, self.player)
         if not valid:
             return "Rest"
-
-        # CPU Hype Shop behavior (simple): occasionally buy Pump/Adrenaline.
-        if self.cpu.hype >= 50 and random.random() < 0.15:
-            self.cpu.hype -= 50
-            self.cpu.next_card_bonus = max(int(self.cpu.next_card_bonus), 2)
-            self._log("CPU uses the crowd energy! (Adrenaline +2 next card)")
-        elif self.cpu.hype >= 25 and random.random() < 0.20:
-            self.cpu.hype -= 25
-            self.cpu.next_card_bonus = max(int(self.cpu.next_card_bonus), 1)
-            self._log("CPU digs deep! (Pump Up +1 next card)")
 
         if random.random() < float(self.cpu.mistake_prob):
             return random.choice(valid)
@@ -884,10 +939,10 @@ class WrestleApp(App):
         self.cpu_hp_bar.value = int(self.cpu.hp)
 
         # Grit/Hype meters
-        self.p_grit_label.text = f"[color=bb86fc]GRIT {self.player.grit}/{self.player.max_grit}[/color]"
-        self.c_grit_label.text = f"[color=bb86fc]GRIT {self.cpu.grit}/{self.cpu.max_grit}[/color]"
-        self.p_hype_label.text = f"[color=ff9800]HYPE {self.player.hype}/100[/color]"
-        self.c_hype_label.text = f"[color=ff9800]HYPE {self.cpu.hype}/100[/color]"
+        self.p_grit_label.text = f"[color={COLOR_HEX_GRIT}]GRIT {self.player.grit}/{self.player.max_grit}[/color]"
+        self.c_grit_label.text = f"[color={COLOR_HEX_GRIT}]GRIT {self.cpu.grit}/{self.cpu.max_grit}[/color]"
+        self.p_hype_label.text = f"[color={COLOR_HEX_HYPE}]HYPE {self.player.hype}/100[/color]"
+        self.c_hype_label.text = f"[color={COLOR_HEX_HYPE}]HYPE {self.cpu.hype}/100[/color]"
 
         self.p_grit_bar.max_value = int(self.player.max_grit)
         self.c_grit_bar.max_value = int(self.cpu.max_grit)
@@ -912,11 +967,15 @@ class WrestleApp(App):
         self.hand_layout.clear_widgets()
         for i, card in enumerate(self.player.hand):
             # Color logic
-            bg = (0.2, 0.2, 0.2, 1)
-            if card.color == "RED": bg = (0.5, 0.1, 0.1, 1)
-            elif card.color == "BLUE": bg = (0.1, 0.1, 0.5, 1)
-            elif card.color == "GREEN": bg = (0.1, 0.5, 0.1, 1)
-            elif card.color == "YELLOW": bg = (0.5, 0.5, 0.1, 1)
+            bg = COLOR_BTN_BASE
+            if card.color == "RED":
+                bg = COLOR_STRIKE
+            elif card.color == "BLUE":
+                bg = COLOR_GRAPPLE
+            elif card.color == "GREEN":
+                bg = COLOR_SUBMIT
+            elif card.color == "YELLOW":
+                bg = COLOR_AERIAL
 
             btn = Button(
                 text=str(card.value),
@@ -933,6 +992,13 @@ class WrestleApp(App):
         self._selected_category = category
         self._render_moves_ui()
         self._update_control_bar()
+
+    def _on_category_click(self, category: str) -> None:
+        key = str(category)
+        if key in {"HYPE", "HYPE_SHOP"}:
+            self._set_menu_stage("HYPE_SHOP")
+        else:
+            self._set_menu_stage("MOVES", category=key)
 
     def _category_has_moves(self, category: str) -> bool:
         moves = self._available_moves(self.player, self.cpu)
@@ -956,16 +1022,16 @@ class WrestleApp(App):
         def type_color(mtype: str) -> tuple[float, float, float, float]:
             t = str(mtype)
             if t == "Strike":
-                return (0.23, 0.0, 0.0, 1)
+                return COLOR_STRIKE
             if t in {"Grapple", "Pin"}:
-                return (0.0, 0.0, 0.23, 1)
+                return COLOR_GRAPPLE
             if t == "Submission":
-                return (0.0, 0.23, 0.0, 1)
+                return COLOR_SUBMIT
             if t == "Aerial":
-                return (0.23, 0.23, 0.0, 1)
+                return COLOR_AERIAL
             if t == "Defensive":
-                return (0.10, 0.10, 0.10, 1)
-            return (0.14, 0.14, 0.14, 1)
+                return COLOR_DEFENSIVE
+            return COLOR_BTN_BASE
 
         # Escape stage UI
         if self._menu_stage == "ESCAPE" and self._escape_mode:
@@ -973,7 +1039,7 @@ class WrestleApp(App):
             # Single wide label (span by adding 3 cols worth)
             lbl = Label(
                 text=f"ESCAPE!  Total: {info.get('total', 0)}/{info.get('threshold', 1)}   Plays left: {info.get('plays_left', 0)}\nTap a card to discard it (no redraw).",
-                color=(0.9, 0.9, 0.9, 1),
+                color=COLOR_TEXT_SOFT,
                 size_hint_y=None,
                 height=84,
                 halign="left",
@@ -1003,21 +1069,18 @@ class WrestleApp(App):
                     enabled = self._category_has_moves("UTILITY")
 
                 def go(_inst=None, k=key) -> None:
-                    if k == "HYPE_SHOP":
-                        self._set_menu_stage("HYPE_SHOP")
-                    else:
-                        self._set_menu_stage("MOVES", category=k)
+                    self._on_category_click(k)
 
                 if key == "STRIKES":
-                    bg = (0.23, 0.0, 0.0, 1)
+                    bg = COLOR_STRIKE
                 elif key == "GRAPPLES":
-                    bg = (0.0, 0.0, 0.23, 1)
+                    bg = COLOR_GRAPPLE
                 elif key == "AERIAL_RUNNING":
-                    bg = (0.23, 0.23, 0.0, 1)
+                    bg = COLOR_AERIAL
                 elif key == "HYPE_SHOP":
-                    bg = (0.28, 0.17, 0.0, 1)
+                    bg = COLOR_HYPE_SHOP
                 else:
-                    bg = (0.16, 0.16, 0.16, 1)
+                    bg = COLOR_BTN_BASE
 
                 btn = Button(
                     text=f"[b]{label}[/b]",
@@ -1065,9 +1128,9 @@ class WrestleApp(App):
                 self._render_moves_ui()
                 self._update_control_bar()
 
-            b1 = Button(text="Pump Up\n(25 Hype): Next card +1", size_hint_y=None, height=78, background_normal="", background_color=(0.18, 0.18, 0.18, 1))
-            b2 = Button(text="Adrenaline\n(50 Hype): Next card +2", size_hint_y=None, height=78, background_normal="", background_color=(0.18, 0.18, 0.18, 1))
-            b3 = Button(text="Second Wind\n(80 Hype): Heal 15 HP", size_hint_y=None, height=78, background_normal="", background_color=(0.18, 0.18, 0.18, 1))
+            b1 = Button(text="Pump Up\n(25 Hype): Next card +1", size_hint_y=None, height=78, background_normal="", background_color=COLOR_BTN_BASE)
+            b2 = Button(text="Adrenaline\n(50 Hype): Next card +2", size_hint_y=None, height=78, background_normal="", background_color=COLOR_BTN_BASE)
+            b3 = Button(text="Second Wind\n(80 Hype): Heal 15 HP", size_hint_y=None, height=78, background_normal="", background_color=COLOR_BTN_BASE)
             b1.disabled = self.player.hype < 25
             b2.disabled = self.player.hype < 50
             b3.disabled = self.player.hype < 80
@@ -1112,9 +1175,9 @@ class WrestleApp(App):
                 t = str(mv.get("type", "Setup"))
 
                 if finisher and not disabled:
-                    bg = (0.83, 0.69, 0.22, 1)
+                    bg = COLOR_FINISHER
                 else:
-                    bg = (0.10, 0.10, 0.10, 1) if disabled else type_color(t)
+                    bg = COLOR_DEFENSIVE if disabled else type_color(t)
 
                 selected = (self.selected_move == name)
                 if selected and (not disabled):
@@ -1123,7 +1186,10 @@ class WrestleApp(App):
                 star = "★ " if finisher else ""
                 dmg = int(mv.get('damage', 0))
                 mc = int(mv.get('cost', 0))
-                label = f"{star}{name}\n{dmg} Dmg | {mc} Move"
+                if name == "Defensive":
+                    label = f"{star}{name}\nDiscard (≤5) to Block"
+                else:
+                    label = f"{star}{name}\n{dmg} Dmg | {mc} Move"
                 btn = Button(
                     text=label,
                     size_hint_y=None,
@@ -1202,13 +1268,13 @@ class WrestleApp(App):
             text="LOCK UP\nGet closer to 15 without going over.",
             halign="left",
             valign="middle",
-            color=(0.95, 0.95, 0.95, 1),
+            color=COLOR_TEXT_PROMPT,
         )
         prompt.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, None)))
 
         status = Label(
             text="YOU: 0   |   CPU: 0",
-            color=(0.9, 0.9, 0.9, 1),
+            color=COLOR_TEXT_SOFT,
             halign="left",
             valign="middle",
         )
@@ -1216,7 +1282,7 @@ class WrestleApp(App):
 
         msg = Label(
             text="PUSH adds 1–6. HOLD lets CPU respond.",
-            color=(0.75, 0.75, 0.75, 1),
+            color=COLOR_TEXT_HINT,
             halign="left",
             valign="top",
         )
@@ -1288,8 +1354,8 @@ class WrestleApp(App):
             else:
                 finish(False, "CPU muscles you around and takes control!")
 
-        b_push = Button(text="PUSH", background_normal="", background_color=get_color_from_hex("#2f2f2f"))
-        b_hold = Button(text="HOLD", background_normal="", background_color=get_color_from_hex("#2f2f2f"))
+        b_push = Button(text="PUSH", background_normal="", background_color=COLOR_BTN_BASE)
+        b_hold = Button(text="HOLD", background_normal="", background_color=COLOR_BTN_BASE)
         b_push.bind(on_release=push)
         b_hold.bind(on_release=hold)
         right.add_widget(b_push)
@@ -1395,7 +1461,7 @@ class WrestleApp(App):
 
         self.play_btn.disabled = not enabled
         if enabled:
-            self.play_btn.background_color = get_color_from_hex("#00c853")
+            self.play_btn.background_color = get_color_from_hex(COLOR_HEX_PLAY_ENABLED)
             self.play_btn.text = f"PLAY\n({cost} Grit)"
         else:
             # Still show a cost estimate if we can.
@@ -1405,7 +1471,7 @@ class WrestleApp(App):
                 self.play_btn.text = f"PLAY\n({est} Grit)"
             else:
                 self.play_btn.text = "PLAY"
-            self.play_btn.background_color = get_color_from_hex("#444444")
+            self.play_btn.background_color = get_color_from_hex(COLOR_HEX_PLAY_DISABLED)
 
     def _on_play_click(self, instance):
         self._submit_cards()
@@ -1443,6 +1509,7 @@ class WrestleApp(App):
             self._log("Not enough grit (move + card cost).")
             return
 
+        self._cpu_buy_buffs()
         c_move = self._cpu_choose_move()
         c_cards = self._cpu_choose_cards(c_move)
         # Degrade AI card choice if it somehow can't afford.
