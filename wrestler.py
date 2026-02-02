@@ -11,45 +11,47 @@ MAX_HEALTH = 100
 
 DEFAULT_BRAWLER_MOVESET: list[str] = [
     # Neutral
-    "Jab",
-    "Front Kick",
-    "Desperation Slap",
-    "Lock Up",
-    "Taunt",
-    "Rest",
+    "strike_jab",
+    "strike_front_kick",
+    "strike_desperation_slap",
+    "grap_lock_up",
+    "util_taunt",
+    "util_rest",
     # In-grapple
-    "Fight For Control",
-    "Shove Off",
-    "Snap Suplex",
-    "DDT",
-    "Powerbomb",
-    "Irish Whip",
+    "grap_fight_for_control",
+    "grap_shove_off",
+    "grap_snap_suplex",
+    "grap_ddt",
+    "grap_powerbomb",
+    "grap_irish_whip",
     # Running / counters
-    "Clothesline",
-    "Back Body Drop",
-    "Stop Short",
-    "Rebound Lariat",
+    "strike_clothesline",
+    "grap_back_body_drop",
+    "util_stop_short",
+    "strike_rebound_lariat",
     # Grounded / finish
-    "Stomp",
-    "Pick Up",
-    "Pin",
-    "Submission Hold",
+    "strike_stomp",
+    "strike_upkick",
+    "util_pick_up",
+    "pin_pin",
+    "sub_submission_hold",
     # Recovery / positioning
-    "Kip-up",
-    "Slow Stand Up",
+    "util_kip_up",
+    "util_slow_stand_up",
     # Top rope
-    "Climb Turnbuckle",
-    "Climb Down",
-    "Diving Elbow",
-    "Moonsault",
-    "Shove Off Turnbuckle",
-    "Superplex",
+    "air_climb_turnbuckle",
+    "air_climb_down",
+    "air_diving_elbow",
+    "air_moonsault",
+    "strike_shove_off_turnbuckle",
+    "grap_superplex",
 ]
 
 
 class WrestlerState(str, Enum):
     STANDING = "STANDING"
     GROUNDED = "GROUNDED"
+    CORNERED = "CORNERED"
     TOP_ROPE = "TOP_ROPE"
     RUNNING = "RUNNING"
     # Grapple tiers (AKI-style)
@@ -67,6 +69,12 @@ class GrappleRole(str, Enum):
 class Wrestler:
     name: str
     is_player: bool
+
+    # Profile (roster/career mode foundation)
+    profile: dict | None = None
+
+    # AI traits (used by profile-driven CPU logic)
+    ai_traits: dict[str, int] | None = None
 
     # Card archetype (affects deck distribution)
     archetype: str = "BALANCED"  # "JOBBER" | "BALANCED" | "SUPERSTAR"
@@ -96,6 +104,20 @@ class Wrestler:
     # Status
     stun_turns: int = 0
 
+    # Groggy beat (interactive stun)
+    is_groggy: bool = False
+
+    # AI memory (used for repetition penalties)
+    last_move_name: str | None = None
+
+    # Cumulative stand-up system (counts down while GROUNDED)
+    stun_meter: int = 0
+
+    # Combo chain system
+    chain_window: str | None = None
+    chain_potency: int = 0
+    chain_turns_remaining: int = 0
+
     # One-shot combat modifiers
     next_damage_multiplier: float = 1.0
     next_damage_taken_multiplier: float = 1.0
@@ -108,6 +130,37 @@ class Wrestler:
     hand: list[Card] | None = None
 
     def __post_init__(self) -> None:
+        # Profile overrides (name/finisher/moveset/archetype/AI traits)
+        if self.profile:
+            try:
+                self.name = str(self.profile.get("name", self.name))
+            except Exception:
+                pass
+            try:
+                prof_arch = self.profile.get("archetype")
+                if prof_arch is not None:
+                    self.archetype = str(prof_arch)
+            except Exception:
+                pass
+            try:
+                prof_moveset = self.profile.get("moveset")
+                if prof_moveset:
+                    self.moveset = list(prof_moveset)
+            except Exception:
+                pass
+            try:
+                prof_finisher = self.profile.get("finisher")
+                if prof_finisher:
+                    self.finisher = str(prof_finisher)
+            except Exception:
+                pass
+            try:
+                prof_traits = self.profile.get("ai_traits")
+                if isinstance(prof_traits, dict):
+                    self.ai_traits = {str(k): int(v) for k, v in prof_traits.items()}
+            except Exception:
+                pass
+
         if self.body_parts is None:
             self.body_parts = {"HEAD": 100, "BODY": 100, "LEGS": 100}
 
@@ -116,7 +169,11 @@ class Wrestler:
 
         if self.finisher is None:
             # Reasonable default for the brawler archetype.
-            self.finisher = "Powerbomb" if "Powerbomb" in self.moveset else (self.moveset[-1] if self.moveset else "Powerbomb")
+            default = "grap_powerbomb"
+            self.finisher = default if default in self.moveset else (self.moveset[-1] if self.moveset else default)
+
+        if self.ai_traits is None:
+            self.ai_traits = {}
 
         if self.deck is None:
             self.deck = Deck(self.archetype)
@@ -175,6 +232,29 @@ class Wrestler:
         v = int(self.body_parts.get(part, 100))
         return max(0.0, min(1.0, v / 100.0))
 
+    # --- Limb penalty helpers ---
+    def is_concussed(self) -> bool:
+        return self.limb_pct("HEAD") < 0.30
+
+    def is_winded(self) -> bool:
+        return self.limb_pct("BODY") < 0.30
+
+    def is_hobbled(self) -> bool:
+        return self.limb_pct("LEGS") < 0.30
+
+    def check_limb_penalties(self) -> dict[str, object]:
+        """Return current limb penalty effects.
+
+        - Head < 30%: max_hand_size 4
+        - Body < 30%: passive grit regen halved
+        - Legs < 30%: cannot use Running/Aerial style moves
+        """
+        return {
+            "max_hand_size": 4 if self.is_concussed() else 5,
+            "passive_regen_mult": 0.5 if self.is_winded() else 1.0,
+            "hobbled": bool(self.is_hobbled()),
+        }
+
     def is_flow(self) -> bool:
         return self.flow_turns_remaining > 0
 
@@ -206,7 +286,14 @@ class Wrestler:
     def draw_to_full(self, *, hand_size: int = 5) -> None:
         if self.hand is None or self.deck is None:
             return
+
+        # Head trauma reduces your effective hand size.
+        effective = int(hand_size)
+        if int(hand_size) == 5 and self.is_concussed():
+            effective = 4
+
         need = max(0, int(hand_size) - len(self.hand))
+        need = max(0, int(effective) - len(self.hand))
         if need <= 0:
             return
         self.hand.extend(self.deck.draw(need))
@@ -265,6 +352,10 @@ class Wrestler:
         return before - after
 
     def set_state(self, new_state: WrestlerState) -> None:
+        # If we just got knocked down, seed the stand-up meter.
+        if new_state == WrestlerState.GROUNDED and self.state != WrestlerState.GROUNDED:
+            # More damage taken (lower HP%) -> harder to rise.
+            self.stun_meter = 10 + int(20 * (1.0 - float(self.hp_pct())))
         self.state = new_state
 
     def is_in_grapple(self) -> bool:

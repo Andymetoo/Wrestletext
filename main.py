@@ -7,7 +7,7 @@ from tkinter import messagebox, ttk
 
 from cards import HEX_COLORS
 from mechanics import lockup_minigame
-from moves_db import MOVES
+from moves_db import MOVES_BY_NAME as MOVES
 from wrestler import GrappleRole, MAX_HEALTH, Wrestler, WrestlerState
 
 
