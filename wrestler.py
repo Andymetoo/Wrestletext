@@ -13,6 +13,7 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
     # Neutral
     "strike_jab",
     "strike_front_kick",
+    "strike_spinning_backfist",
     "strike_desperation_slap",
     "grap_lock_up",
     "util_taunt",
@@ -24,8 +25,10 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
     "strike_knee_to_gut",
     "strike_ear_clap",
     "strike_gut_punch",
+    "grap_headlock_takeover",
     "grap_snap_suplex",
     "grap_ddt",
+    "grap_belly_to_belly",
     "grap_powerbomb",
     "grap_irish_whip",
     # Running / counters
@@ -35,15 +38,21 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
     "strike_rebound_lariat",
     "util_charge",
     "strike_running_clothesline",
+    "strike_running_big_boot",
+    "strike_running_stomp",
     # Grounded / finish
     "strike_stomp",
     "strike_upkick",
+    "strike_grounded_heel_kick",
     "util_pick_up",
     "pin_pin",
     "sub_submission_hold",
     # Whip defense
     "util_regain_balance",
     "strike_trip",
+    "strike_tossed_wild_lariat",
+    # Corner
+    "strike_corner_boot",
     # Recovery / positioning
     "util_kip_up",
     "util_slow_stand_up",
@@ -53,6 +62,7 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
     "air_diving_elbow",
     "air_moonsault",
     "air_frog_splash",
+    "air_shooting_star_press",
     "strike_shove_off_turnbuckle",
     "grap_superplex",
 ]

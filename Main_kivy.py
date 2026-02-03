@@ -1006,7 +1006,14 @@ class WrestleApp(App):
 
         if user.state == WrestlerState.STANDING and target.state == WrestlerState.STANDING:
             allowed_names = {MOVE_LOCK_UP, MOVE_TAUNT, MOVE_DEFENSIVE}
-            names = [n for n in names if MOVES[n].get("type") == "Strike" or n in allowed_names]
+
+            def neutral_ok(n: str) -> bool:
+                mv = MOVES.get(n, {})
+                t = str(mv.get("type", "Setup"))
+                su = str(mv.get("set_user_state", ""))
+                return (t == "Strike") or (n in allowed_names) or (t == "Setup" and su in {"RUNNING", "TOP_ROPE"})
+
+            names = [n for n in names if neutral_ok(n)]
             if self._move_is_legal(MOVE_REST, user, target) and self._passes_moveset(user, MOVE_REST):
                 names.append(MOVE_REST)
 
@@ -1068,6 +1075,11 @@ class WrestleApp(App):
 
         self._log_separator()
 
+        # Track pre-exchange TOSSED so a newly-created toss (e.g., Irish Whip)
+        # persists into the next beat.
+        p_was_tossed = (self.player.state == WrestlerState.TOSSED)
+        c_was_tossed = (self.cpu.state == WrestlerState.TOSSED)
+
         p_move_cost = int(MOVES.get(p_move, {}).get("cost", 0))
         c_move_cost = int(MOVES.get(c_move, {}).get("cost", 0))
 
@@ -1102,11 +1114,18 @@ class WrestleApp(App):
             self.cpu.chain_potency = 0
             self._log(f"{self._fmt_name(self.cpu)}: Combo bonus applied!")
 
-        # Momentum modifier (scaled): each 2 momentum => ±1 score, max 3 at ±5.
+        # Momentum modifier (scaled): 1-3 => ±1, 4-5 => ±2.
         mom = int(getattr(self, "momentum", 0))
-        mom = max(-5, min(5, mom))
-        mom_mag = 0 if mom == 0 else int((abs(mom) + 1) // 2)
-        mom_scaled = mom_mag if mom > 0 else (-mom_mag if mom < 0 else 0)
+        mom = max(-int(MOMENTUM_MAX_ABS), min(int(MOMENTUM_MAX_ABS), mom))
+        mag = abs(int(mom))
+        if mag == 0:
+            mom_scaled = 0
+        elif mag <= int(MOMENTUM_SCORE_TIER1_MAX):
+            mom_scaled = int(MOMENTUM_SCORE_TIER1_BONUS)
+        else:
+            mom_scaled = int(MOMENTUM_SCORE_TIER2_BONUS)
+        if mom < 0:
+            mom_scaled = -int(mom_scaled)
         if p_move != MOVE_DEFENSIVE:
             p_score += mom_scaled
         if c_move != MOVE_DEFENSIVE:
@@ -1406,8 +1425,8 @@ class WrestleApp(App):
             if run_loser_after:
                 self._execute_move(attacker=loser, defender=winner, move_name=str(loser_move), damage_override=0)
 
-        # Irish whip window: if a wrestler is TOSSED and the opponent doesn't capitalize
-        # with a TOSSED-targeting attack on this exchange, they recover to STANDING.
+        # Irish whip window: if a wrestler STARTED this exchange as TOSSED and the opponent
+        # doesn't capitalize with a TOSSED-targeting attack, they recover.
         def _capitalized_on_tossed(attacker_move: str) -> bool:
             mv = MOVES.get(str(attacker_move), {})
             if str(mv.get("req_target_state", "ANY")) != "TOSSED":
@@ -1417,9 +1436,9 @@ class WrestleApp(App):
             return (t not in {"Setup", "Defensive"}) or dmg > 0
 
         try:
-            if self.player.state == WrestlerState.TOSSED and not _capitalized_on_tossed(str(c_move)):
+            if bool(p_was_tossed) and self.player.state == WrestlerState.TOSSED and not _capitalized_on_tossed(str(c_move)):
                 self.player.set_state(WrestlerState.STANDING)
-            if self.cpu.state == WrestlerState.TOSSED and not _capitalized_on_tossed(str(p_move)):
+            if bool(c_was_tossed) and self.cpu.state == WrestlerState.TOSSED and not _capitalized_on_tossed(str(p_move)):
                 self.cpu.set_state(WrestlerState.STANDING)
         except Exception:
             pass
@@ -1434,15 +1453,21 @@ class WrestleApp(App):
         if (not simultaneous) and (winner is not None) and (w_move is not None):
             delta = 0
             if str(w_move) != MOVE_DEFENSIVE:
-                delta = 1 if (winner is self.player) else -1
+                if bool(MOMENTUM_GAIN_ON_ATTACKS_ONLY):
+                    w_type = str(MOVES.get(str(w_move), {}).get("type", "Setup"))
+                    is_attack = w_type not in {"Setup", "Defensive"}
+                    if is_attack:
+                        delta = int(MOMENTUM_WIN_DELTA) if (winner is self.player) else -int(MOMENTUM_WIN_DELTA)
+                else:
+                    delta = int(MOMENTUM_WIN_DELTA) if (winner is self.player) else -int(MOMENTUM_WIN_DELTA)
 
             if delta != 0:
                 cur = int(getattr(self, "momentum", 0))
-                cur = max(-5, min(5, cur))
-                if abs(cur) >= 3 and (cur * delta) < 0:
+                cur = max(-int(MOMENTUM_MAX_ABS), min(int(MOMENTUM_MAX_ABS), cur))
+                if abs(cur) >= int(MOMENTUM_REVERSAL_RESET_THRESHOLD) and (cur * delta) < 0:
                     self._log("Momentum swing! The match flow resets.")
                     cur = 0
-                self.momentum = max(-5, min(5, int(cur + delta)))
+                self.momentum = max(-int(MOMENTUM_MAX_ABS), min(int(MOMENTUM_MAX_ABS), int(cur + delta)))
 
         self._update_hud()
 
@@ -2030,7 +2055,7 @@ class WrestleApp(App):
 
         # Momentum
         mom = int(getattr(self, "momentum", 0))
-        mom = max(-5, min(5, mom))
+        mom = max(-int(MOMENTUM_MAX_ABS), min(int(MOMENTUM_MAX_ABS), mom))
         if mom > 0:
             hexc = COLOR_HEX_MOMENTUM_POS
         elif mom < 0:
@@ -2038,7 +2063,7 @@ class WrestleApp(App):
         else:
             hexc = COLOR_HEX_MOMENTUM_NEU
         self.momentum_label.text = f"[color={hexc}]MOM {mom:+d}[/color]"
-        self.momentum_bar.max_abs = 5
+        self.momentum_bar.max_abs = int(MOMENTUM_MAX_ABS)
         self.momentum_bar.value_signed = int(mom)
         self.momentum_bar.bar_color = get_color_from_hex(COLOR_HEX_MOMENTUM_POS if mom >= 0 else COLOR_HEX_MOMENTUM_NEG)
 
@@ -2165,7 +2190,7 @@ class WrestleApp(App):
             info = self._escape_mode
             # Single wide label (span by adding 3 cols worth)
             lbl = Label(
-                text=f"ESCAPE!  Total: {info.get('total', 0)}/{info.get('threshold', 1)}   Plays left: {info.get('plays_left', 0)}\nTap a card to discard it (no redraw).",
+                text=f"ESCAPE!  Total: {info.get('total', 0)}/{info.get('threshold', 1)}   Plays left: {info.get('plays_left', 0)}\nSelect a card, then press PLAY (no redraw).",
                 color=COLOR_TEXT_SOFT,
                 size_hint_y=None,
                 height=84,
@@ -2426,7 +2451,7 @@ class WrestleApp(App):
                     label = f"[b]{star}{disp}[/b]\n[size=13sp]{sub}[/size]"
                 else:
                     label = f"[b]{star}{disp}[/b]\n[size=13sp]{dmg} DMG | [color={COLOR_HEX_GRIT}]{mc} GRIT[/color][/size]"
-                btn = Button(
+                btn = BorderedButton(
                     text=label,
                     markup=True,
                     size_hint_y=None,
@@ -2434,6 +2459,9 @@ class WrestleApp(App):
                     background_normal="",
                     background_color=bg,
                 )
+                btn.border_color = list(COLOR_CARD_SELECTED)
+                btn.border_width = float(dp(2))
+                btn.show_border = bool(selected and (not disabled))
                 btn.disabled = disabled
                 btn.move_name = slug
                 btn.bind(on_release=self._on_move_click)
@@ -2453,6 +2481,7 @@ class WrestleApp(App):
         self.selected_move = name
         self.selected_cards.clear()
         self._render_hand()
+        self._render_moves_ui()
         self._update_play_button()
 
     def _do_lock_up(self) -> None:
@@ -2630,9 +2659,15 @@ class WrestleApp(App):
         if idx < 0:
             return
 
-        # Escape mode: tap-to-discard.
+        # Escape mode: select 1 card, then press PLAY.
         if self._escape_mode is not None and bool(self._escape_mode.get("defender_is_player")):
-            self._escape_play_card(idx)
+            if idx in self.selected_cards:
+                self.selected_cards.remove(idx)
+            else:
+                self.selected_cards.clear()
+                self.selected_cards.add(idx)
+            self._render_hand()
+            self._update_play_button()
             return
 
         if not self.selected_move:
@@ -2644,10 +2679,6 @@ class WrestleApp(App):
 
         if idx in self.selected_cards:
             self.selected_cards.remove(idx)
-            base = getattr(instance, "base_bg", None)
-            if base is None:
-                base = list(instance.background_color)
-            instance.background_color = base
         else:
             if len(self.selected_cards) >= 2:
                 self._log("Max 2 cards.")
@@ -2671,7 +2702,8 @@ class WrestleApp(App):
                     return
 
             self.selected_cards.add(idx)
-            instance.background_color = COLOR_CARD_SELECTED
+
+        self._render_hand()
 
         self._update_play_button()
 
@@ -2702,7 +2734,7 @@ class WrestleApp(App):
             else:
                 self.hint_label.text = "Select 1 card (or doubles), then PLAY."
         elif self._menu_stage == "ESCAPE":
-            self.hint_label.text = "ESCAPE! Tap a card to discard."
+            self.hint_label.text = "ESCAPE! Select 1 card, then PLAY."
         else:
             self.hint_label.text = ""
 
@@ -2714,7 +2746,7 @@ class WrestleApp(App):
         if self.game_over:
             enabled = False
         elif self._menu_stage == "ESCAPE":
-            enabled = False
+            enabled = bool(self._escape_mode is not None) and bool(self._escape_mode.get("defender_is_player")) and (len(self.selected_cards) == 1)
         elif self._menu_stage != "MOVES":
             enabled = False
         elif not move_name:
@@ -2735,7 +2767,10 @@ class WrestleApp(App):
         self.play_btn.disabled = not enabled
         if enabled:
             self.play_btn.background_color = get_color_from_hex(COLOR_HEX_PLAY_ENABLED)
-            self.play_btn.text = f"PLAY\n({cost} Grit)"
+            if self._menu_stage == "ESCAPE":
+                self.play_btn.text = "PLAY\n(ESCAPE)"
+            else:
+                self.play_btn.text = f"PLAY\n({cost} Grit)"
         else:
             # Still show a cost estimate if we can.
             if move_name:
@@ -2747,12 +2782,28 @@ class WrestleApp(App):
             self.play_btn.background_color = get_color_from_hex(COLOR_HEX_PLAY_DISABLED)
 
     def _on_play_click(self, instance):
-        self._submit_cards()
+        if self._escape_mode is not None and bool(self._escape_mode.get("defender_is_player")) and self._menu_stage == "ESCAPE":
+            self._submit_escape_card()
+        else:
+            self._submit_cards()
+
+    def _submit_escape_card(self) -> None:
+        if self.game_over:
+            return
+        if self._escape_mode is None:
+            return
+        if not bool(self._escape_mode.get("defender_is_player")):
+            return
+        if self._menu_stage != "ESCAPE":
+            return
+        if len(self.selected_cards) != 1:
+            return
+        idx = next(iter(self.selected_cards))
+        self.selected_cards.clear()
+        self._escape_play_card(int(idx))
 
     def _submit_cards(self) -> None:
         if self.game_over:
-            return
-        if self._escape_mode is not None:
             return
         if self._menu_stage != "MOVES":
             return
