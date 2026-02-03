@@ -52,6 +52,7 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
     "air_climb_down",
     "air_diving_elbow",
     "air_moonsault",
+    "air_frog_splash",
     "strike_shove_off_turnbuckle",
     "grap_superplex",
 ]

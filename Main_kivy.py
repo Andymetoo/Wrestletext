@@ -14,6 +14,7 @@ from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.properties import ListProperty, NumericProperty
 import random
+import math
 
 # Import your existing logic
 from wrestler import Wrestler, WrestlerState, GrappleRole, MAX_HEALTH
@@ -119,6 +120,28 @@ TUNING_GRIT_PASSIVE_REGEN = 2  # Grit recovered if you spent 0 this turn
 # Botch mechanic: injured wrestlers may fail Attack moves.
 # Chance (%) = Missing_HP / TUNING_BOTCH_DIVISOR
 TUNING_BOTCH_DIVISOR = 4
+
+# Grapple-break strikes: if defender wins the clash by this margin while using a
+# grapple-defense Strike, the grapple breaks and both reset to STANDING.
+GRAPPLE_BREAK_STRIKE_VALUE = 3
+
+# Log readability
+LOG_EXCHANGE_SEPARATOR = "────────────────────────"
+
+# Clash reveal tuning
+REVEAL_LOSER_MOVE_NAME = True
+REVEAL_LOSER_CARDS = False
+
+# Damage tuning
+DOUBLES_DAMAGE_MODIFIER = 1.25
+SUBMISSION_TICK_DAMAGE = 4
+
+# CPU grounded behavior
+CPU_GETUP_HEALTHY_PCT = 0.60
+CPU_GETUP_BONUS_HEALTHY = 45
+CPU_UPKICK_PENALTY_WHEN_HEALTHY = 22
+CPU_REST_BONUS_WHEN_HURT = 28
+CPU_REST_HURT_PCT = 0.45
 
 # ==========================================
 #  ✨ VFX (Clash / Damage Overlay)
@@ -760,6 +783,9 @@ class WrestleApp(App):
         self.log_layout.add_widget(lbl)
         Clock.schedule_once(lambda _dt: self.log_scroll.scroll_to(lbl), 0)
 
+    def _log_separator(self) -> None:
+        self._log(LOG_EXCHANGE_SEPARATOR)
+
     def _c(self, text: str, hex_color: str) -> str:
         return f"[color={hex_color}]{text}[/color]"
 
@@ -998,6 +1024,8 @@ class WrestleApp(App):
         if self.game_over:
             return
 
+        self._log_separator()
+
         p_move_cost = int(MOVES.get(p_move, {}).get("cost", 0))
         c_move_cost = int(MOVES.get(c_move, {}).get("cost", 0))
 
@@ -1024,13 +1052,13 @@ class WrestleApp(App):
             self.player.chain_turns_remaining = 0
             self.player.chain_window = None
             self.player.chain_potency = 0
-            self._log(f"{self.player.name}: Combo bonus applied!")
+            self._log(f"{self._fmt_name(self.player)}: Combo bonus applied!")
         if c_move != MOVE_DEFENSIVE and getattr(self.cpu, "chain_window", None) == c_move and int(getattr(self.cpu, "chain_turns_remaining", 0)) > 0:
             c_score += int(getattr(self.cpu, "chain_potency", 0))
             self.cpu.chain_turns_remaining = 0
             self.cpu.chain_window = None
             self.cpu.chain_potency = 0
-            self._log(f"{self.cpu.name}: Combo bonus applied!")
+            self._log(f"{self._fmt_name(self.cpu)}: Combo bonus applied!")
 
         # Momentum modifier (scaled): each 2 momentum => ±1 score, max 3 at ±5.
         mom = int(getattr(self, "momentum", 0))
@@ -1073,18 +1101,7 @@ class WrestleApp(App):
                 return "BadCard"
             return "Random"
 
-        if p_move == MOVE_DEFENSIVE:
-            p_pool = sum(int(c.value) for c in (p_cards or []))
-            self._log(f"{p_name}: {self._fmt_move(MOVE_DEFENSIVE)} (DEF {p_pool}) ({p_cards_txt})")
-        else:
-            self._log(f"{p_name}: {self._fmt_move(p_move)} ({p_score}) ({p_cards_txt})")
-
-        if c_move == MOVE_DEFENSIVE:
-            c_pool = sum(int(c.value) for c in (c_cards or []))
-            self._log(f"{c_name}: {self._fmt_move(MOVE_DEFENSIVE)} (DEF {c_pool}) ({c_cards_txt})")
-        else:
-            # CPU card reveal requested.
-            self._log(f"{c_name}: {self._fmt_move(c_move)} ({c_score}) ({c_cards_txt}) [{cpu_mode_label()}]")
+        # Winner-focused reveal happens after the clash resolves.
 
         winner = loser = None
         w_move = None
@@ -1160,10 +1177,46 @@ class WrestleApp(App):
 
         # Better feedback: make the clash winner obvious in the log.
         if (not simultaneous) and (winner is not None) and (loser is not None):
-            self._log(
-                f"[b]{self._fmt_name(winner)} wins the clash![/b] "
-                f"({int(p_score)} vs {int(c_score)})"
-            )
+            winner_move = p_move if winner is self.player else c_move
+            loser_move = c_move if winner is self.player else p_move
+            winner_score = int(p_score) if winner is self.player else int(c_score)
+            loser_score = int(c_score) if winner is self.player else int(p_score)
+            winner_cards = p_cards if winner is self.player else c_cards
+            loser_cards = c_cards if winner is self.player else p_cards
+
+            def score_txt(move_name: str, score: int, cards: list) -> str:
+                if move_name == MOVE_DEFENSIVE:
+                    pool = sum(int(c.value) for c in (cards or []))
+                    return f"DEF {pool}"
+                return str(int(score))
+
+            w_txt = score_txt(str(winner_move), winner_score, winner_cards)
+            l_txt = score_txt(str(loser_move), loser_score, loser_cards)
+            w_cards_txt = self._fmt_cards(winner_cards)
+            l_cards_txt = self._fmt_cards(loser_cards)
+
+            extra = ""
+            if winner is self.cpu:
+                extra = f" [{cpu_mode_label()}]"
+
+            # Example style:
+            # "CPU was going for Chokeslam (7), but YOU beat him to the punch with Lock Up (9) (Cards: 4, 5)!"
+            if REVEAL_LOSER_MOVE_NAME:
+                if REVEAL_LOSER_CARDS:
+                    loser_bits = f"{self._fmt_move(str(loser_move))} ({l_txt}) ({l_cards_txt})"
+                else:
+                    loser_bits = f"{self._fmt_move(str(loser_move))} ({l_txt})"
+                self._log(
+                    f"[b]{self._fmt_name(winner)} wins the clash![/b] "
+                    f"{self._fmt_name(loser)} was going for {loser_bits}, "
+                    f"but {self._fmt_name(winner)} beats them to it with {self._fmt_move(str(winner_move))} ({w_txt}) ({w_cards_txt})!{extra}"
+                )
+            else:
+                self._log(
+                    f"[b]{self._fmt_name(winner)} wins the clash![/b] "
+                    f"{self._fmt_move(str(winner_move))} ({w_txt}) ({w_cards_txt})!{extra}"
+                )
+
             self._last_clash_winner = winner
             # Base flash on clash result; damage (if any) will override in _execute_move.
             self._flash_clash(outcome=("player" if winner is self.player else "cpu"), damage=0)
@@ -1199,6 +1252,29 @@ class WrestleApp(App):
                     critical_damage_override = int(round(float(raw) * 1.5))
                 self._log(f"CRITICAL! {self._fmt_name(winner)} catches {self._fmt_name(loser)} resting!")
 
+        # Passive regen text: show it early in the log stack.
+        def _apply_passive_regen(w: Wrestler, total_spent: int, *, blocked: bool) -> None:
+            if not TUNING_ENABLE_PASSIVE_REGEN:
+                return
+            if int(total_spent) != 0:
+                return
+            if bool(blocked):
+                return
+            before = int(w.grit)
+            regen = int(TUNING_GRIT_PASSIVE_REGEN)
+            try:
+                if bool(w.is_winded()):
+                    regen = max(0, int(regen // 2))
+            except Exception:
+                pass
+            w.grit = min(w.max_grit, int(w.grit) + int(regen))
+            gained = int(w.grit) - before
+            if gained > 0:
+                self._log(f"{self._fmt_name(w)}: Passive Regen (+{gained} Grit).")
+
+        _apply_passive_regen(self.player, p_total_spent, blocked=bool(caught_napping_player and p_move == MOVE_REST))
+        _apply_passive_regen(self.cpu, c_total_spent, blocked=bool(caught_napping_cpu and c_move == MOVE_REST))
+
         # Spend grit + apply card-driven economy + discard + redraw (both sides pay their attempt).
         self.player.spend_grit(p_move_cost)
         # If the player got caught resting, cancel all Rest regen (including card-regen).
@@ -1217,6 +1293,29 @@ class WrestleApp(App):
         self.player.next_card_bonus = 0
         self.cpu.next_card_bonus = 0
 
+        # Grapple-break strikes: defender breaks free on a decisive win.
+        if (not simultaneous) and (winner is not None) and (loser is not None) and (w_move is not None):
+            try:
+                mv = MOVES.get(str(w_move), {})
+                if str(mv.get("type", "Setup")) == "Strike":
+                    w_score_val = int(p_score) if winner is self.player else int(c_score)
+                    l_score_val = int(c_score) if winner is self.player else int(p_score)
+                    margin = int(w_score_val - l_score_val)
+                    if (
+                        margin >= int(GRAPPLE_BREAK_STRIKE_VALUE)
+                        and bool(winner.is_in_grapple())
+                        and bool(loser.is_in_grapple())
+                        and getattr(winner, "grapple_role", None) == GrappleRole.DEFENSE
+                        and getattr(loser, "grapple_role", None) == GrappleRole.OFFENSE
+                    ):
+                        winner.clear_grapple()
+                        loser.clear_grapple()
+                        winner.set_state(WrestlerState.STANDING)
+                        loser.set_state(WrestlerState.STANDING)
+                        self._log(f"BREAK! {self._fmt_name(winner)} cracks {self._fmt_name(loser)} and slips free of the hold!")
+            except Exception:
+                pass
+
         if simultaneous:
             self._execute_move(attacker=self.player, defender=self.cpu, move_name=p_move, clash_score=p_score, card_value_sum=p_card_value_sum, cards=p_cards)
             self._execute_move(attacker=self.cpu, defender=self.player, move_name=c_move, clash_score=c_score, card_value_sum=c_card_value_sum, cards=c_cards)
@@ -1224,7 +1323,7 @@ class WrestleApp(App):
             loser_move = c_move if winner is self.player else p_move
             loser_type = str(MOVES.get(loser_move, {}).get("type", "Setup"))
             if str(w_move) in {MOVE_TAUNT, MOVE_REST} and loser_type not in {"Setup", "Defensive"}:
-                self._log(f"{winner.name} dodges effortlessly while {loser.name} wastes the beat.")
+                self._log(f"{self._fmt_name(winner)} dodges effortlessly while {self._fmt_name(loser)} wastes the beat.")
 
             passive_winner = str(w_move) in {MOVE_TAUNT, MOVE_REST}
             positioning_loser = str(loser_move) in {MOVE_SLOW_STAND_UP, MOVE_KIP_UP, MOVE_CLIMB_DOWN, MOVE_STOP_SHORT, MOVE_SHOVE_OFF}
@@ -1242,12 +1341,21 @@ class WrestleApp(App):
                     self._log(f"Defensive ({pool}): slip away from the attack!")
                 else:
                     reduction = pool if opp_score <= 10 else (pool // 2)
-                    dmg_override = max(0, raw_dmg - max(0, reduction))
-                    if raw_dmg > 0 and dmg_override < raw_dmg:
-                        self._log(f"Defensive ({pool}): soften the blow ({raw_dmg}->{dmg_override}).")
+                    boosted_raw = int(raw_dmg)
                     w_cards = p_cards if winner is self.player else c_cards
+                    try:
+                        if boosted_raw > 0 and w_cards and len(w_cards) == 2 and int(w_cards[0].value) == int(w_cards[1].value):
+                            w_type = str(MOVES.get(w_move, {}).get("type", "Setup"))
+                            if w_type in {"Strike", "Grapple", "Aerial"}:
+                                boosted_raw = int(math.ceil(float(boosted_raw) * float(DOUBLES_DAMAGE_MODIFIER)))
+                    except Exception:
+                        pass
+
+                    dmg_override = max(0, int(boosted_raw) - max(0, reduction))
+                    if int(raw_dmg) > 0 and int(dmg_override) < int(boosted_raw):
+                        self._log(f"Defensive ({pool}): soften the blow ({int(boosted_raw)}->{int(dmg_override)}).")
                     w_val = p_card_value_sum if winner is self.player else c_card_value_sum
-                    self._execute_move(attacker=winner, defender=loser, move_name=w_move, clash_score=w_score, damage_override=dmg_override, suppress_state_changes=bool(suppress_states), card_value_sum=w_val, cards=w_cards)
+                    self._execute_move(attacker=winner, defender=loser, move_name=w_move, clash_score=w_score, damage_override=dmg_override, suppress_state_changes=bool(suppress_states), card_value_sum=w_val, cards=w_cards, apply_doubles_bonus=False)
             else:
                 w_cards = p_cards if winner is self.player else c_cards
                 w_val = p_card_value_sum if winner is self.player else c_card_value_sum
@@ -1255,32 +1363,6 @@ class WrestleApp(App):
 
             if run_loser_after:
                 self._execute_move(attacker=loser, defender=winner, move_name=str(loser_move), damage_override=0)
-
-        if TUNING_ENABLE_PASSIVE_REGEN:
-            if int(p_total_spent) == 0 and not (caught_napping_player and p_move == MOVE_REST):
-                before = int(self.player.grit)
-                regen = int(TUNING_GRIT_PASSIVE_REGEN)
-                try:
-                    if bool(self.player.is_winded()):
-                        regen = max(0, int(regen // 2))
-                except Exception:
-                    pass
-                self.player.grit = min(self.player.max_grit, int(self.player.grit) + int(regen))
-                gained = int(self.player.grit) - before
-                if gained > 0:
-                    self._log(f"{self.player.name}: Passive Regen (+{gained} Grit).")
-            if int(c_total_spent) == 0 and not (caught_napping_cpu and c_move == MOVE_REST):
-                before = int(self.cpu.grit)
-                regen = int(TUNING_GRIT_PASSIVE_REGEN)
-                try:
-                    if bool(self.cpu.is_winded()):
-                        regen = max(0, int(regen // 2))
-                except Exception:
-                    pass
-                self.cpu.grit = min(self.cpu.max_grit, int(self.cpu.grit) + int(regen))
-                gained = int(self.cpu.grit) - before
-                if gained > 0:
-                    self._log(f"{self.cpu.name}: Passive Regen (+{gained} Grit).")
 
         # Irish whip window: if a wrestler is TOSSED and the opponent doesn't capitalize
         # with a TOSSED-targeting attack on this exchange, they recover to STANDING.
@@ -1324,8 +1406,8 @@ class WrestleApp(App):
 
         if self.player.hp <= 0 or self.cpu.hp <= 0:
             self.game_over = True
-            winner_name = self.cpu.name if self.player.hp <= 0 else self.player.name
-            self._log(f"GAME OVER! {winner_name} WINS!")
+            winner = self.cpu if self.player.hp <= 0 else self.player
+            self._log(f"GAME OVER! {self._fmt_name(winner)} WINS!")
             self._update_control_bar()
             return
 
@@ -1367,7 +1449,9 @@ class WrestleApp(App):
         # CPU defending: simulate from its current hand.
         total = 0
         plays = 3
+        self._log(f"{self._fmt_name(attacker)} attempts a {str(kind).lower()}!")
         while plays > 0:
+            count_no = 4 - int(plays)
             plays -= 1
             hand = list(defender.hand or [])
             if not hand:
@@ -1375,14 +1459,41 @@ class WrestleApp(App):
             best = max(hand, key=lambda c: int(c.value))
             total += int(best.value)
             defender.discard_cards([best])
+
+            if str(kind).upper() == "PINFALL":
+                if count_no == 1:
+                    self._log(f"ONE! {self._fmt_name(defender)} fights out using a {int(best.value)}. (total {total}/{threshold})")
+                elif count_no == 2:
+                    self._log(f"TWO! {self._fmt_name(defender)} kicks out using a {int(best.value)}. (total {total}/{threshold})")
+                else:
+                    self._log(f"THREE...?! {self._fmt_name(defender)} strains with a {int(best.value)}. (total {total}/{threshold})")
+            else:
+                self._log(f"Escape attempt: {self._fmt_name(defender)} discards {int(best.value)} (total {total}/{threshold})")
+
             if total >= int(threshold):
-                self._log(f"{defender.name} escapes the {kind.lower()} attempt!")
+                if str(kind).upper() == "PINFALL":
+                    if count_no == 1:
+                        self._log(f"KICKOUT AT ONE! {self._fmt_name(defender)} escapes!")
+                    elif count_no == 2:
+                        self._log(f"KICKOUT AT TWO! {self._fmt_name(defender)} escapes!")
+                    else:
+                        self._log(f"JUST IN TIME! {self._fmt_name(defender)} escapes!")
+                else:
+                    self._log(f"{self._fmt_name(defender)} escapes the {str(kind).lower()} attempt!")
                 self._end_escape(success=True)
                 return
 
-        winner = attacker.name
+            # Submission tick damage: each failed escape play hurts.
+            if str(kind).upper() == "SUBMISSION":
+                dealt = defender.take_damage(int(SUBMISSION_TICK_DAMAGE), target_part="BODY")
+                self._log(f"{self._fmt_name(attacker)} cranks it! {self._fmt_name(defender)} takes {self._fmt_damage(dealt)}.")
+
+        winner = self._fmt_name(attacker)
         self.game_over = True
-        self._log(f"{kind}! Escape failed — {winner} wins.")
+        if str(kind).upper() == "PINFALL":
+            self._log(f"THREE! {kind}! Escape failed — {winner} wins.")
+        else:
+            self._log(f"{kind}! Escape failed — {winner} wins.")
         self._update_control_bar()
 
     def _escape_play_card(self, index: int) -> None:
@@ -1397,6 +1508,9 @@ class WrestleApp(App):
         gained = int(card.value)
         self.player.discard_cards([card])
 
+        plays_before = int(self._escape_mode.get("plays_left", 0))
+        count_no = max(1, 4 - int(plays_before))
+
         self._escape_mode["total"] = int(self._escape_mode.get("total", 0)) + gained
         self._escape_mode["plays_left"] = int(self._escape_mode.get("plays_left", 0)) - 1
 
@@ -1404,20 +1518,48 @@ class WrestleApp(App):
         threshold = int(self._escape_mode.get("threshold", 1))
         kind = str(self._escape_mode.get("kind", "ESCAPE"))
 
-        self._log(f"Escape discard: {gained} (total {total}/{threshold})")
+        if kind.upper() == "PINFALL":
+            if count_no == 1:
+                self._log(f"ONE! Escape attempt: discard {gained} (total {total}/{threshold})")
+            elif count_no == 2:
+                self._log(f"TWO! Escape attempt: discard {gained} (total {total}/{threshold})")
+            else:
+                self._log(f"THREE... Escape attempt: discard {gained} (total {total}/{threshold})")
+        else:
+            self._log(f"Escape discard: {gained} (total {total}/{threshold})")
         self._render_hand()
         self._render_moves_ui()
         self._update_control_bar()
 
         if total >= threshold:
+            if kind.upper() == "PINFALL":
+                if count_no == 1:
+                    self._log("KICKOUT AT ONE!")
+                elif count_no == 2:
+                    self._log("KICKOUT AT TWO!")
+                else:
+                    self._log("JUST IN TIME! KICKOUT!")
             self._log(f"You escape the {kind.lower()} attempt!")
             self._end_escape(success=True)
             return
 
+        if kind.upper() == "SUBMISSION":
+            try:
+                attacker = self._escape_mode.get("attacker")
+                defender = self._escape_mode.get("defender")
+                if isinstance(attacker, Wrestler) and isinstance(defender, Wrestler):
+                    dealt = defender.take_damage(int(SUBMISSION_TICK_DAMAGE), target_part="BODY")
+                    self._log(f"{self._fmt_name(attacker)} cranks it! {self._fmt_name(defender)} takes {self._fmt_damage(dealt)}.")
+            except Exception:
+                pass
+
         if int(self._escape_mode.get("plays_left", 0)) <= 0:
             winner = "YOU" if bool(self._escape_mode.get("attacker_is_player")) else "CPU"
             self.game_over = True
-            self._log(f"{kind}! Escape failed — {winner} wins.")
+            if kind.upper() == "PINFALL":
+                self._log(f"THREE! {kind}! Escape failed — {winner} wins.")
+            else:
+                self._log(f"{kind}! Escape failed — {winner} wins.")
             self._update_control_bar()
             return
 
@@ -1455,6 +1597,7 @@ class WrestleApp(App):
         suppress_state_changes: bool = False,
         card_value_sum: int = 0,
         cards: list | None = None,
+        apply_doubles_bonus: bool = True,
     ) -> None:
         # card_value_sum/cards are optional extras used by Taunt + Stand Up systems.
 
@@ -1495,7 +1638,7 @@ class WrestleApp(App):
         if move_name in {MOVE_SLOW_STAND_UP, MOVE_KIP_UP}:
             # Cumulative stand-up: reduce stun_meter instead of instantly standing.
             if attacker.state != WrestlerState.GROUNDED:
-                self._log(f"{attacker.name} tries to stand, but isn't down.")
+                self._log(f"{self._fmt_name(attacker)} tries to stand, but isn't down.")
                 return
 
             progress = int(card_value_sum)
@@ -1509,7 +1652,7 @@ class WrestleApp(App):
             if int(attacker.stun_meter) <= 0:
                 attacker.stun_meter = 0
                 attacker.set_state(WrestlerState.STANDING)
-                self._log(f"{attacker.name} fights to their feet!")
+                self._log(f"{self._fmt_name(attacker)} fights to their feet!")
             else:
                 self._log(f"Struggling to rise... (Stun: {attacker.stun_meter} left)")
             return
@@ -1520,9 +1663,9 @@ class WrestleApp(App):
                 defender.clear_grapple()
                 attacker.set_state(WrestlerState.STANDING)
                 defender.set_state(WrestlerState.STANDING)
-                self._log(f"{attacker.name} shoves free and resets to neutral!")
+                self._log(f"{self._fmt_name(attacker)} shoves free and resets to neutral!")
             else:
-                self._log(f"{attacker.name} pushes empty air — {defender.name} was already gone!")
+                self._log(f"{self._fmt_name(attacker)} pushes empty air — {self._fmt_name(defender)} was already gone!")
             return
 
         # Pin/Submission start escape
@@ -1532,6 +1675,15 @@ class WrestleApp(App):
             return
 
         raw_damage = int(move.get("damage", 0)) if damage_override is None else int(damage_override)
+
+        # Doubles bonus damage: if doubles were used for a successful attack, boost by 25%.
+        try:
+            if bool(apply_doubles_bonus) and raw_damage > 0 and cards and len(cards) == 2 and int(cards[0].value) == int(cards[1].value):
+                if mtype in {"Strike", "Grapple", "Aerial"}:
+                    raw_damage = int(math.ceil(float(raw_damage) * float(DOUBLES_DAMAGE_MODIFIER)))
+                    self._log("Doubles hit! Damage boosted.")
+        except Exception:
+            pass
         if raw_damage > 0:
             target_part = move.get("target_part", None)
             dealt = defender.take_damage(raw_damage, target_part=str(target_part) if target_part else None)
@@ -1571,7 +1723,7 @@ class WrestleApp(App):
             attacker.chain_potency = int(move.get("chain_bonus", 0))
             # Stored as 2 because the next _start_turn() immediately decrements by 1.
             attacker.chain_turns_remaining = 2
-            self._log(f"{attacker.name} has a combo opening! (+{attacker.chain_potency} on {attacker.chain_window})")
+            self._log(f"{self._fmt_name(attacker)} has a combo opening! (+{attacker.chain_potency} on {attacker.chain_window})")
 
     # -------------------------------------------------------------------------
     # HELPER LOGIC
@@ -1584,18 +1736,28 @@ class WrestleApp(App):
         if int(self.cpu.hype) < 25:
             return
 
-        # Simple parity behavior: choose between Pump (+1) and Adrenaline (+2).
+        # Simple parity behavior: occasionally buy a grit refill (if low), otherwise
+        # choose between Pump (+1) and Adrenaline (+2).
         # Kept probabilistic so CPU doesn't always auto-buy.
+
+        if int(self.cpu.hype) >= 30 and int(self.cpu.grit) <= 1 and random.random() < 0.35:
+            self.cpu.hype -= 30
+            before = int(self.cpu.grit)
+            self.cpu.grit = min(self.cpu.max_grit, int(self.cpu.grit) + 4)
+            gained = int(self.cpu.grit) - before
+            self._log(f"{self._fmt_name(self.cpu)} rallies! (+{gained} Grit)")
+            return
+
         if int(self.cpu.hype) >= 50 and random.random() < 0.15:
             self.cpu.hype -= 50
             self.cpu.next_card_bonus = max(int(self.cpu.next_card_bonus), 2)
-            self._log(f"{self.cpu.name} uses the crowd energy! (Adrenaline +2 next card)")
+            self._log(f"{self._fmt_name(self.cpu)} uses the crowd energy! (Adrenaline +2 next card)")
             return
 
         if int(self.cpu.hype) >= 25 and random.random() < 0.20:
             self.cpu.hype -= 25
             self.cpu.next_card_bonus = max(int(self.cpu.next_card_bonus), 1)
-            self._log(f"{self.cpu.name} digs deep! (Pump Up +1 next card)")
+            self._log(f"{self._fmt_name(self.cpu)} digs deep! (Pump Up +1 next card)")
             return
 
     def _cpu_ai_mode(self) -> str:
@@ -1680,6 +1842,26 @@ class WrestleApp(App):
             manual = int(mv.get("ai_score", 0))
             bonus = int(type_bonus_for(name, mv))
             score = float(dmg + manual + bonus)
+
+            # Grounded realism: prioritize standing up when healthy.
+            try:
+                cpu_state = getattr(self.cpu, "state", None)
+                cpu_hp = float(self.cpu.hp_pct())
+                is_grounded = (cpu_state == WrestlerState.GROUNDED)
+                wants_up = bool(is_grounded and cpu_hp >= float(CPU_GETUP_HEALTHY_PCT))
+                set_user = str(mv.get("set_user_state", ""))
+                is_getup = bool(is_grounded and set_user == "STANDING")
+                if wants_up and is_getup:
+                    score += float(CPU_GETUP_BONUS_HEALTHY)
+                # If healthy, discourage repeated ground strikes (e.g., Upkick) instead of standing.
+                if wants_up and str(mv.get("type", "Setup")) == "Strike" and (not is_getup):
+                    score -= float(CPU_UPKICK_PENALTY_WHEN_HEALTHY)
+                # If hurt, resting from the mat becomes more appealing.
+                if is_grounded and str(name) == MOVE_REST:
+                    if cpu_hp <= float(CPU_REST_HURT_PCT) or int(self.cpu.grit) <= 1:
+                        score += float(CPU_REST_BONUS_WHEN_HURT)
+            except Exception:
+                pass
 
             # Repetition penalty to prevent spamming
             if str(getattr(self.cpu, "last_move_name", None) or "") == str(name):
@@ -1896,7 +2078,20 @@ class WrestleApp(App):
         if category == "GRAPPLES":
             return any(MOVES[m].get("type") in {"Grapple", "Submission", "Pin"} for m in moves)
         if category == "AERIAL_RUNNING":
-            return any(MOVES[m].get("type") == "Aerial" for m in moves)
+            def is_aerial_running(m: str) -> bool:
+                mv = MOVES.get(m, {})
+                t = str(mv.get("type", "Setup"))
+                ru = str(mv.get("req_user_state", "ANY"))
+                rt = str(mv.get("req_target_state", "ANY"))
+                su = str(mv.get("set_user_state", ""))
+                return (
+                    t == "Aerial"
+                    or ru in {"RUNNING", "TOP_ROPE"}
+                    or su in {"RUNNING", "TOP_ROPE"}
+                    or rt == "TOSSED"
+                )
+
+            return any(is_aerial_running(m) for m in moves)
         if category == "UTILITY":
             return any(MOVES[m].get("type") in {"Setup", "Defensive"} for m in moves)
         return True
@@ -2064,17 +2259,35 @@ class WrestleApp(App):
                 self._render_moves_ui()
                 self._update_control_bar()
 
+            def buy_grit_refill(_inst=None) -> None:
+                if self.player.hype < 30:
+                    return
+                if int(self.player.grit) >= int(self.player.max_grit):
+                    return
+                self.player.hype -= 30
+                before = int(self.player.grit)
+                self.player.grit = min(self.player.max_grit, int(self.player.grit) + 4)
+                gained = int(self.player.grit) - before
+                self._log(f"Hype Shop: Grit Refill! (+{gained} Grit)")
+                self._update_hud()
+                self._render_moves_ui()
+                self._update_control_bar()
+
             b1 = Button(text="Pump Up\n(25 Hype): Next card +1", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
             b2 = Button(text="Adrenaline\n(50 Hype): Next card +2", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
+            b_grit = Button(text="Grit Refill\n(30 Hype): +4 Grit", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
             b3 = Button(text="Second Wind\n(80 Hype): Heal 15 HP", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
             b1.disabled = self.player.hype < 25
             b2.disabled = self.player.hype < 50
+            b_grit.disabled = (self.player.hype < 30) or (int(self.player.grit) >= int(self.player.max_grit))
             b3.disabled = self.player.hype < 80
             b1.bind(on_release=buy_pump)
             b2.bind(on_release=buy_adrenaline)
+            b_grit.bind(on_release=buy_grit_refill)
             b3.bind(on_release=buy_second_wind)
             self.move_list_layout.add_widget(b1)
             self.move_list_layout.add_widget(b2)
+            self.move_list_layout.add_widget(b_grit)
             self.move_list_layout.add_widget(b3)
             return
 
@@ -2092,12 +2305,12 @@ class WrestleApp(App):
                 if cat == "GRAPPLES":
                     return t in {"Grapple", "Submission", "Pin"}
                 if cat == "AERIAL_RUNNING":
+                    su = str(MOVES[name].get("set_user_state", ""))
                     return (
                         t == "Aerial"
-                        or ru == "RUNNING"
-                        or name == MOVE_CHARGE
+                        or ru in {"RUNNING", "TOP_ROPE"}
+                        or su in {"RUNNING", "TOP_ROPE"}
                         or rt == "TOSSED"
-                        or name == MOVE_REGAIN_BALANCE
                     )
                 if cat == "UTILITY":
                     return t in {"Setup", "Defensive"}

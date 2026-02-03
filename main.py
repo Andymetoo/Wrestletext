@@ -809,7 +809,20 @@ class TacticalWrestlingApp:
         if category == "GRAPPLES":
             return any(MOVES[m].get("type") in {"Grapple", "Submission", "Pin"} for m in moves)
         if category == "AERIAL_RUNNING":
-            return any(MOVES[m].get("type") == "Aerial" or self.player.state in {WrestlerState.RUNNING, WrestlerState.TOP_ROPE} for m in moves)
+            def is_aerial_running(m: str) -> bool:
+                mv = MOVES.get(m, {})
+                t = str(mv.get("type", "Setup"))
+                ru = str(mv.get("req_user_state", "ANY"))
+                rt = str(mv.get("req_target_state", "ANY"))
+                su = str(mv.get("set_user_state", ""))
+                return (
+                    t == "Aerial"
+                    or ru in {"RUNNING", "TOP_ROPE"}
+                    or su in {"RUNNING", "TOP_ROPE"}
+                    or rt == "TOSSED"
+                )
+
+            return any(is_aerial_running(m) for m in moves)
         if category == "UTILITY":
             return any(MOVES[m].get("type") in {"Setup", "Defensive"} for m in moves)
         return True
@@ -1027,12 +1040,20 @@ class TacticalWrestlingApp:
 
             def in_cat(name: str) -> bool:
                 t = str(MOVES[name].get("type", "Setup"))
+                ru = str(MOVES[name].get("req_user_state", "ANY"))
+                rt = str(MOVES[name].get("req_target_state", "ANY"))
                 if cat == "STRIKES":
                     return t == "Strike"
                 if cat == "GRAPPLES":
                     return t in {"Grapple", "Submission", "Pin"}
                 if cat == "AERIAL_RUNNING":
-                    return t == "Aerial" or self.player.state in {WrestlerState.RUNNING, WrestlerState.TOP_ROPE}
+                    su = str(MOVES[name].get("set_user_state", ""))
+                    return (
+                        t == "Aerial"
+                        or ru in {"RUNNING", "TOP_ROPE"}
+                        or su in {"RUNNING", "TOP_ROPE"}
+                        or rt == "TOSSED"
+                    )
                 if cat == "UTILITY":
                     return t in {"Setup", "Defensive"}
                 return True
