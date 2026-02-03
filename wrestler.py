@@ -20,6 +20,10 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
     # In-grapple
     "grap_fight_for_control",
     "grap_shove_off",
+    "strike_forearm_club",
+    "strike_knee_to_gut",
+    "strike_ear_clap",
+    "strike_gut_punch",
     "grap_snap_suplex",
     "grap_ddt",
     "grap_powerbomb",
@@ -29,12 +33,17 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
     "grap_back_body_drop",
     "util_stop_short",
     "strike_rebound_lariat",
+    "util_charge",
+    "strike_running_clothesline",
     # Grounded / finish
     "strike_stomp",
     "strike_upkick",
     "util_pick_up",
     "pin_pin",
     "sub_submission_hold",
+    # Whip defense
+    "util_regain_balance",
+    "strike_trip",
     # Recovery / positioning
     "util_kip_up",
     "util_slow_stand_up",
@@ -54,6 +63,7 @@ class WrestlerState(str, Enum):
     CORNERED = "CORNERED"
     TOP_ROPE = "TOP_ROPE"
     RUNNING = "RUNNING"
+    TOSSED = "TOSSED"  # involuntary run (e.g., Irish whip)
     # Grapple tiers (AKI-style)
     GRAPPLE_WEAK = "GRAPPLE_WEAK"  # initial tie-up (light moves, whip, go-behind)
     GRAPPLE_STRONG = "GRAPPLE_STRONG"  # deep control (big throws, specials)
@@ -357,6 +367,10 @@ class Wrestler:
             # More damage taken (lower HP%) -> harder to rise.
             self.stun_meter = 10 + int(20 * (1.0 - float(self.hp_pct())))
         self.state = new_state
+
+        # Leaving grapple tiers should also clear the role.
+        if not self.is_in_grapple():
+            self.grapple_role = None
 
     def is_in_grapple(self) -> bool:
         return self.state in {

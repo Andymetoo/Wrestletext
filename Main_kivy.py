@@ -1,6 +1,7 @@
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
+from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.label import Label
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.progressbar import ProgressBar
@@ -33,6 +34,14 @@ MOVE_STOP_SHORT = "util_stop_short"
 MOVE_CLIMB_DOWN = "air_climb_down"
 MOVE_DESPERATION_PUNCH = "strike_desperation_punch"
 MOVE_BITE = "strike_bite"
+MOVE_FOREARM_CLUB = "strike_forearm_club"
+MOVE_KNEE_TO_GUT = "strike_knee_to_gut"
+MOVE_EAR_CLAP = "strike_ear_clap"
+MOVE_GUT_PUNCH = "strike_gut_punch"
+MOVE_CHARGE = "util_charge"
+MOVE_RUNNING_CLOTHESLINE = "strike_running_clothesline"
+MOVE_TRIP = "strike_trip"
+MOVE_REGAIN_BALANCE = "util_regain_balance"
 
 # ==========================================
 #  🎨 THEME & TUNING (Tinker Here!)
@@ -112,6 +121,18 @@ TUNING_GRIT_PASSIVE_REGEN = 2  # Grit recovered if you spent 0 this turn
 TUNING_BOTCH_DIVISOR = 4
 
 # ==========================================
+#  ✨ VFX (Clash / Damage Overlay)
+# ==========================================
+# Overlay alpha at start (0..1)
+VFX_OVERLAY_ALPHA = 0.22
+# Base fade duration in seconds (no damage)
+VFX_OVERLAY_FADE_BASE = 0.35
+# Max fade duration in seconds (heavy damage)
+VFX_OVERLAY_FADE_MAX = 1.10
+# Damage threshold that maps to max fade
+VFX_OVERLAY_DAMAGE_CAP = 20
+
+# ==========================================
 #  📏 DIMENSIONS & LAYOUT
 # ==========================================
 # Use dp() so the UI feels consistent across desktop and tall phones.
@@ -174,6 +195,123 @@ class ColoredBar(Widget):
         self._bar_rect.pos = self.pos
         self._bar_rect.size = (self.width * pct, self.height)
 
+
+class CenteredBar(Widget):
+    """Meter bar that fills from center.
+
+    Used for momentum: positive (player-favoring) fills LEFT, negative fills RIGHT.
+    """
+
+    value_signed = NumericProperty(0)  # -max_abs..+max_abs
+    max_abs = NumericProperty(5)
+    bar_color = ListProperty([1, 1, 1, 1])
+    back_color = ListProperty([0.12, 0.12, 0.12, 1])
+    center_color = ListProperty([0.25, 0.25, 0.25, 1])
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        with self.canvas:
+            from kivy.graphics import Color, Rectangle
+
+            self._back_color_instr = Color(*self.back_color)
+            self._back_rect = Rectangle(pos=self.pos, size=self.size)
+
+            self._center_color_instr = Color(*self.center_color)
+            self._center_rect = Rectangle(pos=self.pos, size=(dp(2), self.height))
+
+            self._bar_color_instr = Color(*self.bar_color)
+            self._bar_rect = Rectangle(pos=self.pos, size=(0, self.height))
+
+        self.bind(pos=self._redraw, size=self._redraw)
+        self.bind(value_signed=self._redraw, max_abs=self._redraw)
+        self.bind(bar_color=self._redraw_colors, back_color=self._redraw_colors, center_color=self._redraw_colors)
+
+    def _redraw_colors(self, *_args):
+        self._back_color_instr.rgba = self.back_color
+        self._bar_color_instr.rgba = self.bar_color
+        self._center_color_instr.rgba = self.center_color
+        self._redraw()
+
+    def _redraw(self, *_args):
+        self._back_rect.pos = self.pos
+        self._back_rect.size = self.size
+
+        cx = float(self.x) + (float(self.width) / 2.0)
+        self._center_rect.pos = (cx - dp(1), self.y)
+        self._center_rect.size = (dp(2), self.height)
+
+        denom = float(self.max_abs) if float(self.max_abs) > 0 else 1.0
+        pct = max(0.0, min(1.0, abs(float(self.value_signed)) / denom))
+        half = float(self.width) / 2.0
+        bar_w = half * pct
+
+        if float(self.value_signed) >= 0:
+            # Positive momentum: fill LEFT toward player.
+            self._bar_rect.pos = (cx - bar_w, self.y)
+        else:
+            # Negative momentum: fill RIGHT toward CPU.
+            self._bar_rect.pos = (cx, self.y)
+        self._bar_rect.size = (bar_w, self.height)
+
+
+class ScreenFlash(Widget):
+    """Full-screen overlay flash that fades out."""
+
+    alpha = NumericProperty(0.0)
+    rgba = ListProperty([1, 1, 1, 0])
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._fade_ev = None
+        self._t = 0.0
+        self._dur = 0.5
+        with self.canvas:
+            from kivy.graphics import Color, Rectangle
+
+            self._color = Color(1, 1, 1, 0)
+            self._rect = Rectangle(pos=self.pos, size=self.size)
+
+        self.bind(pos=self._redraw, size=self._redraw)
+        self.bind(alpha=self._apply)
+        self.bind(rgba=self._apply)
+
+    def _redraw(self, *_args):
+        self._rect.pos = self.pos
+        self._rect.size = self.size
+
+    def _apply(self, *_args):
+        r, g, b, _a = (list(self.rgba) + [0, 0, 0, 0])[:4]
+        self._color.rgba = (float(r), float(g), float(b), float(self.alpha))
+
+    def flash(self, *, rgb: tuple[float, float, float], duration: float) -> None:
+        if self._fade_ev is not None:
+            try:
+                self._fade_ev.cancel()
+            except Exception:
+                pass
+            self._fade_ev = None
+
+        self.rgba = [float(rgb[0]), float(rgb[1]), float(rgb[2]), 1.0]
+        self.alpha = float(VFX_OVERLAY_ALPHA)
+        self._t = 0.0
+        self._dur = max(0.05, float(duration))
+
+        def step(dt: float) -> None:
+            self._t += float(dt)
+            p = min(1.0, self._t / max(0.001, self._dur))
+            # Linear fade to 0
+            self.alpha = float(VFX_OVERLAY_ALPHA) * (1.0 - p)
+            if p >= 1.0:
+                self.alpha = 0.0
+                if self._fade_ev is not None:
+                    try:
+                        self._fade_ev.cancel()
+                    except Exception:
+                        pass
+                    self._fade_ev = None
+
+        self._fade_ev = Clock.schedule_interval(step, 1 / 60.0)
+
 class WrestleApp(App):
     def build(self):
         Window.clearcolor = COLOR_BG_MAIN
@@ -198,8 +336,11 @@ class WrestleApp(App):
         self.momentum: int = 0
         
         # --- ROOT LAYOUT ---
-        root = BoxLayout(orientation='vertical')
+        root = FloatLayout()
         self.root = root
+
+        main = BoxLayout(orientation='vertical', size_hint=(1, 1), pos_hint={'x': 0, 'y': 0})
+        self._main = main
 
         # 1. HUD (Top)
         hud = BoxLayout(orientation='vertical', size_hint_y=None, height=HUD_HEIGHT, padding=PAD_SM, spacing=dp(5))
@@ -220,7 +361,7 @@ class WrestleApp(App):
         self.state_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, inst.height)))
         hud.add_widget(self.state_label)
         
-        hp_row = BoxLayout(orientation='horizontal', spacing=GAP_SM, size_hint_y=None, height=dp(38))
+        hp_row = BoxLayout(orientation='horizontal', spacing=GAP_SM, size_hint_y=None, height=dp(54))
         left_hp = BoxLayout(orientation='vertical')
         right_hp = BoxLayout(orientation='vertical')
         self.player_hp_label = Label(
@@ -249,11 +390,40 @@ class WrestleApp(App):
         )
         self.player_hp_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
         self.cpu_hp_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
+
+        self.player_state_small = Label(
+            text="STATE: STANDING",
+            color=COLOR_TEXT_SOFT,
+            size_hint_y=None,
+            height=dp(14),
+            font_size="11sp",
+            halign="center",
+            valign="middle",
+            shorten=True,
+            shorten_from="right",
+            max_lines=1,
+        )
+        self.cpu_state_small = Label(
+            text="STATE: STANDING",
+            color=COLOR_TEXT_SOFT,
+            size_hint_y=None,
+            height=dp(14),
+            font_size="11sp",
+            halign="center",
+            valign="middle",
+            shorten=True,
+            shorten_from="right",
+            max_lines=1,
+        )
+        self.player_state_small.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
+        self.cpu_state_small.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
         self.player_hp_bar = ProgressBar(max=MAX_HEALTH, value=MAX_HEALTH, size_hint_y=None, height=dp(14))
         self.cpu_hp_bar = ProgressBar(max=MAX_HEALTH, value=MAX_HEALTH, size_hint_y=None, height=dp(14))
         left_hp.add_widget(self.player_hp_label)
+        left_hp.add_widget(self.player_state_small)
         left_hp.add_widget(self.player_hp_bar)
         right_hp.add_widget(self.cpu_hp_label)
+        right_hp.add_widget(self.cpu_state_small)
         right_hp.add_widget(self.cpu_hp_bar)
         hp_row.add_widget(left_hp)
         hp_row.add_widget(right_hp)
@@ -273,7 +443,7 @@ class WrestleApp(App):
             max_lines=1,
         )
         self.momentum_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
-        self.momentum_bar = ColoredBar(size_hint_y=None, height=dp(8), max_value=10, value=5, bar_color=mom_green)
+        self.momentum_bar = CenteredBar(size_hint_y=None, height=dp(8), max_abs=5, value_signed=0, bar_color=mom_green)
         mom_box = BoxLayout(orientation='vertical', spacing=dp(2), size_hint_y=None, height=dp(28))
         mom_box.add_widget(self.momentum_label)
         mom_box.add_widget(self.momentum_bar)
@@ -437,8 +607,8 @@ class WrestleApp(App):
         self.move_scroll.add_widget(self.move_list_layout)
         arena_box.add_widget(self.move_scroll)
         
-        root.add_widget(hud)
-        root.add_widget(arena_box)
+        main.add_widget(hud)
+        main.add_widget(arena_box)
 
         # 3. CONTROL BAR
         controls = BoxLayout(orientation='horizontal', size_hint_y=None, height=CONTROL_HEIGHT, spacing=GAP_SM, padding=[PAD_SM, PAD_XS, PAD_SM, PAD_XS])
@@ -473,15 +643,41 @@ class WrestleApp(App):
         controls.add_widget(self.return_btn)
         controls.add_widget(self.hint_label)
         controls.add_widget(self.play_btn)
-        root.add_widget(controls)
+        main.add_widget(controls)
 
         # 4. HAND (Bottom)
         self.hand_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=HAND_HEIGHT, spacing=dp(4), padding=[PAD_SM, PAD_XS, PAD_SM, PAD_SM])
-        root.add_widget(self.hand_layout)
+        main.add_widget(self.hand_layout)
+
+        root.add_widget(main)
+
+        # VFX overlay (must be last to draw above everything)
+        self._flash = ScreenFlash(size_hint=(1, 1), pos_hint={'x': 0, 'y': 0})
+        root.add_widget(self._flash)
 
         # Initial Start
         self._start_turn("player")
         return root
+
+    def _flash_clash(self, *, outcome: str, damage: int = 0) -> None:
+        """outcome: 'player' | 'cpu' | 'neutral'"""
+        if not hasattr(self, "_flash"):
+            return
+        dmg = max(0, int(damage))
+        cap = max(1, int(VFX_OVERLAY_DAMAGE_CAP))
+        p = min(1.0, float(dmg) / float(cap))
+        dur = float(VFX_OVERLAY_FADE_BASE) + (float(VFX_OVERLAY_FADE_MAX) - float(VFX_OVERLAY_FADE_BASE)) * p
+
+        if outcome == "player":
+            rgb = (0.0, 0.78, 0.30)
+        elif outcome == "cpu":
+            rgb = (0.95, 0.20, 0.20)
+        else:
+            rgb = (0.65, 0.65, 0.65)
+        try:
+            self._flash.flash(rgb=rgb, duration=dur)
+        except Exception:
+            pass
 
     def _sync_log_width(self, *_args) -> None:
         # Keep log content aligned to the visible ScrollView width.
@@ -692,14 +888,26 @@ class WrestleApp(App):
         user_dis = user.is_in_grapple() and (user.grapple_role == GrappleRole.DEFENSE)
 
         if user_dis:
-            if move_name not in {MOVE_FIGHT_FOR_CONTROL, MOVE_DEFENSIVE, MOVE_REST, MOVE_SHOVE_OFF, MOVE_DESPERATION_PUNCH, MOVE_BITE}:
+            if move_name not in {
+                MOVE_FIGHT_FOR_CONTROL,
+                MOVE_DEFENSIVE,
+                MOVE_REST,
+                MOVE_SHOVE_OFF,
+                MOVE_DESPERATION_PUNCH,
+                MOVE_BITE,
+                MOVE_EAR_CLAP,
+                MOVE_GUT_PUNCH,
+                MOVE_FOREARM_CLUB,
+                MOVE_KNEE_TO_GUT,
+            }:
                 return False
 
         if move_name == MOVE_DEFENSIVE:
             if user_adv:
                 return False
             neutral_ok = (user.state == WrestlerState.STANDING and target.state == WrestlerState.STANDING)
-            if not (neutral_ok or user_dis):
+            tossed_ok = (user.state == WrestlerState.TOSSED)
+            if not (neutral_ok or user_dis or tossed_ok):
                 return False
 
         return True
@@ -717,6 +925,7 @@ class WrestleApp(App):
             MOVE_KIP_UP,
             MOVE_CLIMB_DOWN,
             MOVE_STOP_SHORT,
+            MOVE_REGAIN_BALANCE,
         }
         if move_name in universal:
             return True
@@ -823,25 +1032,31 @@ class WrestleApp(App):
             self.cpu.chain_potency = 0
             self._log(f"{self.cpu.name}: Combo bonus applied!")
 
-        # Momentum modifier: -5..+5 (positive favors player)
+        # Momentum modifier (scaled): each 2 momentum => ±1 score, max 3 at ±5.
         mom = int(getattr(self, "momentum", 0))
         mom = max(-5, min(5, mom))
+        mom_mag = 0 if mom == 0 else int((abs(mom) + 1) // 2)
+        mom_scaled = mom_mag if mom > 0 else (-mom_mag if mom < 0 else 0)
         if p_move != MOVE_DEFENSIVE:
-            p_score += mom
+            p_score += mom_scaled
         if c_move != MOVE_DEFENSIVE:
-            c_score -= mom
+            c_score -= mom_scaled
 
         def is_simultaneous_nonconflicting(name: str) -> bool:
             mv = MOVES.get(name, {})
             t = str(mv.get("type", "Setup"))
             dmg = int(mv.get("damage", 0))
-            if name in {MOVE_DEFENSIVE, MOVE_LOCK_UP}:
+            if name in {MOVE_DEFENSIVE, MOVE_LOCK_UP, MOVE_FIGHT_FOR_CONTROL}:
                 return False
             if t in {"Pin", "Submission"}:
                 return False
             return (t == "Setup" and dmg == 0) or name in {MOVE_TAUNT, MOVE_REST, MOVE_SLOW_STAND_UP, MOVE_KIP_UP}
 
         simultaneous = bool(is_simultaneous_nonconflicting(p_move) and is_simultaneous_nonconflicting(c_move))
+
+        # Used by _execute_move to scale VFX by actual damage.
+        self._last_clash_winner = None
+        self._last_clash_flashed = False
 
         p_name = self._fmt_name(self.player)
         c_name = self._fmt_name(self.cpu)
@@ -879,8 +1094,10 @@ class WrestleApp(App):
 
         if simultaneous:
             self._log("Simultaneous Action! Both wrestlers focus on their strategy.")
+            self._flash_clash(outcome="neutral", damage=0)
         elif p_move == MOVE_DEFENSIVE and c_move == MOVE_DEFENSIVE:
             self._log("Both fighters play it safe—no clean opening this beat.")
+            self._flash_clash(outcome="neutral", damage=0)
         elif (p_move != MOVE_DEFENSIVE) and (c_move != MOVE_DEFENSIVE) and (p_score == c_score):
             # Botch edge case: in a tie, a botch can break the stalemate.
             def is_attack(move_name: str) -> bool:
@@ -940,6 +1157,16 @@ class WrestleApp(App):
         else:
             winner, loser = self.cpu, self.player
             w_move, w_score = c_move, c_score
+
+        # Better feedback: make the clash winner obvious in the log.
+        if (not simultaneous) and (winner is not None) and (loser is not None):
+            self._log(
+                f"[b]{self._fmt_name(winner)} wins the clash![/b] "
+                f"({int(p_score)} vs {int(c_score)})"
+            )
+            self._last_clash_winner = winner
+            # Base flash on clash result; damage (if any) will override in _execute_move.
+            self._flash_clash(outcome=("player" if winner is self.player else "cpu"), damage=0)
 
         # --- Botch check happens before criticals (so a botch can't "critical") ---
         caught_napping_player = False
@@ -1054,6 +1281,24 @@ class WrestleApp(App):
                 gained = int(self.cpu.grit) - before
                 if gained > 0:
                     self._log(f"{self.cpu.name}: Passive Regen (+{gained} Grit).")
+
+        # Irish whip window: if a wrestler is TOSSED and the opponent doesn't capitalize
+        # with a TOSSED-targeting attack on this exchange, they recover to STANDING.
+        def _capitalized_on_tossed(attacker_move: str) -> bool:
+            mv = MOVES.get(str(attacker_move), {})
+            if str(mv.get("req_target_state", "ANY")) != "TOSSED":
+                return False
+            t = str(mv.get("type", "Setup"))
+            dmg = int(mv.get("damage", 0))
+            return (t not in {"Setup", "Defensive"}) or dmg > 0
+
+        try:
+            if self.player.state == WrestlerState.TOSSED and not _capitalized_on_tossed(str(c_move)):
+                self.player.set_state(WrestlerState.STANDING)
+            if self.cpu.state == WrestlerState.TOSSED and not _capitalized_on_tossed(str(p_move)):
+                self.cpu.set_state(WrestlerState.STANDING)
+        except Exception:
+            pass
 
         # Groggy beat resolution: recovery clears groggy regardless of outcome.
         if str(p_move) == MOVE_GROGGY_RECOVERY:
@@ -1291,6 +1536,15 @@ class WrestleApp(App):
             target_part = move.get("target_part", None)
             dealt = defender.take_damage(raw_damage, target_part=str(target_part) if target_part else None)
             self._log(f"{self._fmt_name(defender)} takes {self._fmt_damage(dealt)}.")
+
+            # Clash overlay VFX: scale by actual dealt damage.
+            try:
+                if (not bool(getattr(self, "_last_clash_flashed", False))) and (getattr(self, "_last_clash_winner", None) is attacker):
+                    outcome = "player" if attacker is self.player else "cpu"
+                    self._flash_clash(outcome=outcome, damage=int(dealt))
+                    self._last_clash_flashed = True
+            except Exception:
+                pass
 
             # Groggy trigger on big hits (single-beat interactive recovery)
             if int(dealt) > 15 and int(getattr(defender, "hp", 0)) > 0:
@@ -1541,6 +1795,15 @@ class WrestleApp(App):
             f"  |  CPU: {c_state} ({c_role}){flow(self.cpu)}{grog(self.cpu)}"
         )
 
+        # Always-visible per-wrestler state lines under names.
+        try:
+            if hasattr(self, "player_state_small"):
+                self.player_state_small.text = f"STATE: {p_state}" if p_role == "NEUTRAL" else f"STATE: {p_state} ({p_role})"
+            if hasattr(self, "cpu_state_small"):
+                self.cpu_state_small.text = f"STATE: {c_state}" if c_role == "NEUTRAL" else f"STATE: {c_state} ({c_role})"
+        except Exception:
+            pass
+
         # Momentum
         mom = int(getattr(self, "momentum", 0))
         mom = max(-5, min(5, mom))
@@ -1551,8 +1814,8 @@ class WrestleApp(App):
         else:
             hexc = COLOR_HEX_MOMENTUM_NEU
         self.momentum_label.text = f"[color={hexc}]MOM {mom:+d}[/color]"
-        self.momentum_bar.max_value = 10
-        self.momentum_bar.value = int(mom + 5)
+        self.momentum_bar.max_abs = 5
+        self.momentum_bar.value_signed = int(mom)
         self.momentum_bar.bar_color = get_color_from_hex(COLOR_HEX_MOMENTUM_POS if mom >= 0 else COLOR_HEX_MOMENTUM_NEG)
 
         # HP Fog-of-War: show only status bands, not exact numbers.
@@ -1710,8 +1973,9 @@ class WrestleApp(App):
                 return
 
             if self.player.state == WrestlerState.STANDING:
+                lock_ok = bool(self._move_is_legal(MOVE_LOCK_UP, self.player, self.cpu) and self._passes_moveset(self.player, MOVE_LOCK_UP))
                 lock_btn = Button(
-                    text="[b]LOCK UP[/b]",
+                    text="[b]LOCK UP[/b]" if lock_ok else "LOCK UP\n(needs both standing + 2 grit)",
                     markup=True,
                     size_hint_x=1,
                     size_hint_y=None,
@@ -1719,6 +1983,7 @@ class WrestleApp(App):
                     background_normal="",
                     background_color=COLOR_BTN_BASE,
                 )
+                lock_btn.disabled = not lock_ok
                 lock_btn.bind(on_release=lambda _inst=None: self._do_lock_up())
                 self.move_list_layout.add_widget(lock_btn)
 
@@ -1747,7 +2012,7 @@ class WrestleApp(App):
                 elif key == "GRAPPLES":
                     bg = COLOR_GRAPPLE
                 elif key == "AERIAL_RUNNING":
-                    bg = COLOR_AERIAL
+                    bg = COLOR_SUBMIT
                 elif key == "HYPE_SHOP":
                     bg = COLOR_HYPE_SHOP
                 else:
@@ -1820,12 +2085,20 @@ class WrestleApp(App):
 
             def in_cat(name: str) -> bool:
                 t = str(MOVES[name].get("type", "Setup"))
+                ru = str(MOVES[name].get("req_user_state", "ANY"))
+                rt = str(MOVES[name].get("req_target_state", "ANY"))
                 if cat == "STRIKES":
                     return t == "Strike"
                 if cat == "GRAPPLES":
                     return t in {"Grapple", "Submission", "Pin"}
                 if cat == "AERIAL_RUNNING":
-                    return t == "Aerial"
+                    return (
+                        t == "Aerial"
+                        or ru == "RUNNING"
+                        or name == MOVE_CHARGE
+                        or rt == "TOSSED"
+                        or name == MOVE_REGAIN_BALANCE
+                    )
                 if cat == "UTILITY":
                     return t in {"Setup", "Defensive"}
                 return True
@@ -1937,7 +2210,23 @@ class WrestleApp(App):
         if self._escape_mode is not None:
             return
         if not self._move_is_legal(MOVE_LOCK_UP, self.player, self.cpu):
-            self._log("Lock Up is not legal right now.")
+            # Better diagnostics to avoid confusion.
+            reasons: list[str] = []
+            try:
+                mv = MOVES.get(MOVE_LOCK_UP, {})
+                cost = int(mv.get("cost", 0))
+                if int(self.player.grit) < cost:
+                    reasons.append(f"need {cost} grit")
+                if self.player.state != WrestlerState.STANDING:
+                    reasons.append(f"you are {self.player.state.name}")
+                if self.cpu.state != WrestlerState.STANDING:
+                    reasons.append(f"CPU is {self.cpu.state.name}")
+                if bool(getattr(self.player, "is_groggy", False)):
+                    reasons.append("you are groggy")
+            except Exception:
+                pass
+            tail = (" (" + ", ".join(reasons) + ")") if reasons else ""
+            self._log("Lock Up is not legal right now." + tail)
             return
 
         self._lockup_minigame(on_done=self._apply_lockup_result)
