@@ -12,7 +12,7 @@ from kivy.core.window import Window
 from kivy.utils import get_color_from_hex
 from kivy.clock import Clock
 from kivy.metrics import dp
-from kivy.properties import ListProperty, NumericProperty
+from kivy.properties import BooleanProperty, ListProperty, NumericProperty
 import random
 import math
 
@@ -135,6 +135,19 @@ REVEAL_LOSER_CARDS = False
 # Damage tuning
 DOUBLES_DAMAGE_MODIFIER = 1.25
 SUBMISSION_TICK_DAMAGE = 4
+
+# Momentum tuning
+MOMENTUM_MAX_ABS = 5
+MOMENTUM_WIN_DELTA = 1
+MOMENTUM_GAIN_ON_ATTACKS_ONLY = True
+MOMENTUM_REVERSAL_RESET_THRESHOLD = 4
+
+# Momentum -> clash score modifier mapping
+# 1-3 = +1, 4-5 = +2 (signed)
+MOMENTUM_SCORE_TIER1_MAX = 3
+MOMENTUM_SCORE_TIER1_BONUS = 1
+MOMENTUM_SCORE_TIER2_MAX = 5
+MOMENTUM_SCORE_TIER2_BONUS = 2
 
 # CPU grounded behavior
 CPU_GETUP_HEALTHY_PCT = 0.60
@@ -335,6 +348,35 @@ class ScreenFlash(Widget):
 
         self._fade_ev = Clock.schedule_interval(step, 1 / 60.0)
 
+
+class BorderedButton(Button):
+    """Button with an optional border highlight (used for selections)."""
+
+    border_color = ListProperty([1, 1, 1, 1])
+    border_width = NumericProperty(2.0)
+    show_border = BooleanProperty(False)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        with self.canvas.after:
+            from kivy.graphics import Color, Line
+
+            self._border_color_instr = Color(1, 1, 1, 0)
+            self._border_line = Line(rectangle=(self.x, self.y, self.width, self.height), width=float(self.border_width))
+
+        self.bind(pos=self._redraw_border, size=self._redraw_border)
+        self.bind(border_color=self._redraw_border, border_width=self._redraw_border, show_border=self._redraw_border)
+        self._redraw_border()
+
+    def _redraw_border(self, *_args) -> None:
+        rgba = list(self.border_color) if self.border_color else [1, 1, 1, 1]
+        rgba = (rgba + [1, 1, 1, 1])[:4]
+        if not bool(self.show_border):
+            rgba[3] = 0.0
+        self._border_color_instr.rgba = [float(rgba[0]), float(rgba[1]), float(rgba[2]), float(rgba[3])]
+        self._border_line.rectangle = (float(self.x), float(self.y), float(self.width), float(self.height))
+        self._border_line.width = float(self.border_width)
+
 class WrestleApp(App):
     def build(self):
         Window.clearcolor = COLOR_BG_MAIN
@@ -466,7 +508,7 @@ class WrestleApp(App):
             max_lines=1,
         )
         self.momentum_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
-        self.momentum_bar = CenteredBar(size_hint_y=None, height=dp(8), max_abs=5, value_signed=0, bar_color=mom_green)
+        self.momentum_bar = CenteredBar(size_hint_y=None, height=dp(8), max_abs=int(MOMENTUM_MAX_ABS), value_signed=0, bar_color=mom_green)
         mom_box = BoxLayout(orientation='vertical', spacing=dp(2), size_hint_y=None, height=dp(28))
         mom_box.add_widget(self.momentum_label)
         mom_box.add_widget(self.momentum_bar)
@@ -2045,14 +2087,15 @@ class WrestleApp(App):
             elif card.color == "YELLOW":
                 bg = COLOR_AERIAL
 
-            btn = Button(
+            selected = (i in self.selected_cards)
+            btn = BorderedButton(
                 text=str(card.value),
                 background_color=bg, background_normal="",
                 font_size='24sp', bold=True
             )
-            btn.base_bg = bg
-            if i in self.selected_cards:
-                btn.background_color = COLOR_CARD_SELECTED
+            btn.border_color = list(COLOR_CARD_SELECTED)
+            btn.border_width = float(dp(2))
+            btn.show_border = bool(selected)
             btn.card_index = i 
             btn.bind(on_release=self._on_card_click)
             self.hand_layout.add_widget(btn)
