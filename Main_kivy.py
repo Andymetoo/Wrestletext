@@ -132,6 +132,9 @@ LOG_EXCHANGE_SEPARATOR = "──────────────────
 REVEAL_LOSER_MOVE_NAME = True
 REVEAL_LOSER_CARDS = False
 
+# Optional debugging: show score math in the log
+REVEAL_SCORE_BREAKDOWN = True
+
 # Damage tuning
 DOUBLES_DAMAGE_MODIFIER = 1.25
 SUBMISSION_TICK_DAMAGE = 4
@@ -155,6 +158,13 @@ CPU_GETUP_BONUS_HEALTHY = 45
 CPU_UPKICK_PENALTY_WHEN_HEALTHY = 22
 CPU_REST_BONUS_WHEN_HURT = 28
 CPU_REST_HURT_PCT = 0.45
+
+# Auto-grit: prevent high-damage 0-cost moves from being "free".
+TUNING_AUTO_GRIT_ON_DAMAGE = True
+AUTO_GRIT_ONLY_WHEN_BASE_COST_ZERO = True
+AUTO_GRIT_DAMAGE_THRESHOLD = 6
+AUTO_GRIT_DAMAGE_STEP = 4
+AUTO_GRIT_PER_STEP = 1
 
 # ==========================================
 #  ✨ VFX (Clash / Damage Overlay)
@@ -386,6 +396,10 @@ class WrestleApp(App):
         c_prof = dict(ROSTER.get(DEFAULT_CPU_PROFILE, {}))
         self.player = Wrestler("YOU", True, profile=p_prof)
         self.cpu = Wrestler("CPU", False, profile=c_prof)
+
+        # Buffs (simple flags; stored on wrestler objects)
+        self.player.lockup_edge_ready = False
+        self.cpu.lockup_edge_ready = False
         
         # Game State
         self.game_over = False
@@ -949,7 +963,7 @@ class WrestleApp(App):
                 return False
 
         # --- 3) Move-cost gating (card cost handled separately) ---
-        if int(user.grit) < int(mv.get("cost", 0)):
+        if int(user.grit) < int(self._move_base_cost(move_name)):
             return False
 
         user_adv = user.is_in_grapple() and (user.grapple_role == GrappleRole.OFFENSE)
@@ -979,6 +993,29 @@ class WrestleApp(App):
                 return False
 
         return True
+
+    def _auto_move_cost(self, move_name: str) -> int:
+        # Never add hidden costs to core system/utility actions.
+        if str(move_name) in {MOVE_LOCK_UP, MOVE_REST, MOVE_TAUNT, MOVE_DEFENSIVE, MOVE_FIGHT_FOR_CONTROL}:
+            return 0
+        if not bool(TUNING_AUTO_GRIT_ON_DAMAGE):
+            return 0
+        mv = MOVES.get(str(move_name), {})
+        base_cost = int(mv.get("cost", 0))
+        if bool(AUTO_GRIT_ONLY_WHEN_BASE_COST_ZERO) and base_cost != 0:
+            return 0
+        dmg = int(mv.get("damage", 0))
+        if dmg < int(AUTO_GRIT_DAMAGE_THRESHOLD):
+            return 0
+        step = max(1, int(AUTO_GRIT_DAMAGE_STEP))
+        per = max(0, int(AUTO_GRIT_PER_STEP))
+        # threshold..(threshold+step-1) => +per, then +per each additional step.
+        tiers = int(math.ceil(float(dmg - int(AUTO_GRIT_DAMAGE_THRESHOLD) + 1) / float(step)))
+        return max(0, int(tiers) * int(per))
+
+    def _move_base_cost(self, move_name: str) -> int:
+        mv = MOVES.get(str(move_name), {})
+        return int(mv.get("cost", 0)) + int(self._auto_move_cost(move_name))
 
     def _passes_moveset(self, wrestler: Wrestler, move_name: str) -> bool:
         # Keep parity with Tk version: universal safety options always allowed.
@@ -1020,7 +1057,7 @@ class WrestleApp(App):
         def key(n: str) -> tuple[int, int, str]:
             t = str(MOVES[n].get("type", "Setup"))
             type_order = {"Defensive": 0, "Setup": 1, "Strike": 2, "Grapple": 3, "Aerial": 4, "Submission": 5, "Pin": 6}
-            return (type_order.get(t, 99), int(MOVES[n].get("cost", 0)), n)
+            return (type_order.get(t, 99), int(self._move_base_cost(n)), n)
 
         return sorted(names, key=key)
 
@@ -1064,7 +1101,7 @@ class WrestleApp(App):
         return cards
 
     def _effective_cost(self, wrestler: Wrestler, move_name: str, cards: list) -> int:
-        mv_cost = int(MOVES.get(move_name, {}).get("cost", 0))
+        mv_cost = int(self._move_base_cost(move_name))
         ignore_cards = (move_name == MOVE_REST)
         card_cost = 0 if ignore_cards else sum(int(c.grit_cost()) for c in (cards or []))
         return int(mv_cost) + int(card_cost)
@@ -1080,8 +1117,8 @@ class WrestleApp(App):
         p_was_tossed = (self.player.state == WrestlerState.TOSSED)
         c_was_tossed = (self.cpu.state == WrestlerState.TOSSED)
 
-        p_move_cost = int(MOVES.get(p_move, {}).get("cost", 0))
-        c_move_cost = int(MOVES.get(c_move, {}).get("cost", 0))
+        p_move_cost = int(self._move_base_cost(p_move))
+        c_move_cost = int(self._move_base_cost(c_move))
 
         p_ignore_cards = (p_move == MOVE_REST)
         c_ignore_cards = (c_move == MOVE_REST)
@@ -1101,14 +1138,18 @@ class WrestleApp(App):
         c_score = -1 if c_move == MOVE_DEFENSIVE else self._calc_clash_score(c_move, c_cards, card_bonus=c_bonus)
 
         # Apply combo-chain bonuses (one-turn window).
+        p_chain_add = 0
+        c_chain_add = 0
         if p_move != MOVE_DEFENSIVE and getattr(self.player, "chain_window", None) == p_move and int(getattr(self.player, "chain_turns_remaining", 0)) > 0:
-            p_score += int(getattr(self.player, "chain_potency", 0))
+            p_chain_add = int(getattr(self.player, "chain_potency", 0))
+            p_score += int(p_chain_add)
             self.player.chain_turns_remaining = 0
             self.player.chain_window = None
             self.player.chain_potency = 0
             self._log(f"{self._fmt_name(self.player)}: Combo bonus applied!")
         if c_move != MOVE_DEFENSIVE and getattr(self.cpu, "chain_window", None) == c_move and int(getattr(self.cpu, "chain_turns_remaining", 0)) > 0:
-            c_score += int(getattr(self.cpu, "chain_potency", 0))
+            c_chain_add = int(getattr(self.cpu, "chain_potency", 0))
+            c_score += int(c_chain_add)
             self.cpu.chain_turns_remaining = 0
             self.cpu.chain_window = None
             self.cpu.chain_potency = 0
@@ -1126,10 +1167,32 @@ class WrestleApp(App):
             mom_scaled = int(MOMENTUM_SCORE_TIER2_BONUS)
         if mom < 0:
             mom_scaled = -int(mom_scaled)
+        p_mom_add = int(mom_scaled) if int(mom_scaled) > 0 else 0
+        c_mom_add = int(-mom_scaled) if int(mom_scaled) < 0 else 0
         if p_move != MOVE_DEFENSIVE:
-            p_score += mom_scaled
+            p_score += int(p_mom_add)
         if c_move != MOVE_DEFENSIVE:
-            c_score -= mom_scaled
+            c_score += int(c_mom_add)
+
+        if bool(REVEAL_SCORE_BREAKDOWN):
+            def _breakdown(move_name: str, cards: list, card_bonus: int, chain_add: int, mom_add: int) -> str:
+                if move_name == MOVE_DEFENSIVE:
+                    return "DEF"
+                if not cards:
+                    return f"0+chain{int(chain_add)}+mom{int(mom_add)}"
+                move_type = str(MOVES.get(move_name, {}).get("type", "Setup"))
+                clash_mod = int(MOVES.get(move_name, {}).get("clash_mod", 0))
+                doubles = bool(len(cards) == 2 and int(cards[0].value) == int(cards[1].value))
+                val = int(cards[0].value) if doubles else sum(int(c.value) for c in cards)
+                dbl = 5 if doubles else 0
+                col = max(int(cards[0].color_bonus(move_type)), int(cards[1].color_bonus(move_type))) if doubles else sum(int(c.color_bonus(move_type)) for c in cards)
+                base = int(val) + int(dbl) + int(col) + int(card_bonus) + int(clash_mod)
+                return f"{val}+dbl{dbl}+col{col}+bon{int(card_bonus)}+mod{clash_mod}+chain{int(chain_add)}+mom{int(mom_add)}={int(base)+int(chain_add)+int(mom_add)}"
+
+            self._log(
+                f"Score: YOU {_breakdown(p_move, p_cards or [], p_bonus, p_chain_add, p_mom_add)} | "
+                f"CPU {_breakdown(c_move, c_cards or [], c_bonus, c_chain_add, c_mom_add)}"
+            )
 
         def is_simultaneous_nonconflicting(name: str) -> bool:
             mv = MOVES.get(name, {})
@@ -1142,6 +1205,12 @@ class WrestleApp(App):
             return (t == "Setup" and dmg == 0) or name in {MOVE_TAUNT, MOVE_REST, MOVE_SLOW_STAND_UP, MOVE_KIP_UP}
 
         simultaneous = bool(is_simultaneous_nonconflicting(p_move) and is_simultaneous_nonconflicting(c_move))
+        defensive_vs_passive = bool(
+            (p_move == MOVE_DEFENSIVE and is_simultaneous_nonconflicting(c_move))
+            or (c_move == MOVE_DEFENSIVE and is_simultaneous_nonconflicting(p_move))
+        )
+        if defensive_vs_passive:
+            simultaneous = True
 
         # Used by _execute_move to scale VFX by actual damage.
         self._last_clash_winner = None
@@ -1171,7 +1240,10 @@ class WrestleApp(App):
         force_winner_execute = False
 
         if simultaneous:
-            self._log("Simultaneous Action! Both wrestlers focus on their strategy.")
+            if defensive_vs_passive:
+                self._log("Quiet beat: Defense meets a non-attack — both actions resolve.")
+            else:
+                self._log("Simultaneous Action! Both wrestlers focus on their strategy.")
             self._flash_clash(outcome="neutral", damage=0)
         elif p_move == MOVE_DEFENSIVE and c_move == MOVE_DEFENSIVE:
             self._log("Both fighters play it safe—no clean opening this beat.")
@@ -1471,12 +1543,9 @@ class WrestleApp(App):
 
         self._update_hud()
 
-        if self.player.hp <= 0 or self.cpu.hp <= 0:
-            self.game_over = True
-            winner = self.cpu if self.player.hp <= 0 else self.player
-            self._log(f"GAME OVER! {self._fmt_name(winner)} WINS!")
-            self._update_control_bar()
-            return
+        # No HP-based KO ending; clamp at 0 and keep going.
+        self.player.hp = max(0, int(self.player.hp))
+        self.cpu.hp = max(0, int(self.cpu.hp))
 
         if self._escape_mode:
             self._render_escape_ui()
@@ -1815,6 +1884,19 @@ class WrestleApp(App):
             self._log(f"{self._fmt_name(self.cpu)} rallies! (+{gained} Grit)")
             return
 
+        # Lock Up Edge (non-stacking): only relevant if a lock up can happen soon.
+        if (
+            int(self.cpu.hype) >= 50
+            and (not bool(getattr(self.cpu, "lockup_edge_ready", False)))
+            and self.cpu.state == WrestlerState.STANDING
+            and self.player.state == WrestlerState.STANDING
+            and random.random() < 0.10
+        ):
+            self.cpu.hype -= 50
+            self.cpu.lockup_edge_ready = True
+            self._log(f"{self._fmt_name(self.cpu)} buys an edge for the next lock up!")
+            return
+
         if int(self.cpu.hype) >= 50 and random.random() < 0.15:
             self.cpu.hype -= 50
             self.cpu.next_card_bonus = max(int(self.cpu.next_card_bonus), 2)
@@ -2062,7 +2144,7 @@ class WrestleApp(App):
             hexc = COLOR_HEX_MOMENTUM_NEG
         else:
             hexc = COLOR_HEX_MOMENTUM_NEU
-        self.momentum_label.text = f"[color={hexc}]MOM {mom:+d}[/color]"
+        self.momentum_label.text = f"[color={hexc}]MOMENTUM {mom:+d}[/color]"
         self.momentum_bar.max_abs = int(MOMENTUM_MAX_ABS)
         self.momentum_bar.value_signed = int(mom)
         self.momentum_bar.bar_color = get_color_from_hex(COLOR_HEX_MOMENTUM_POS if mom >= 0 else COLOR_HEX_MOMENTUM_NEG)
@@ -2236,9 +2318,22 @@ class WrestleApp(App):
                 return
 
             if self.player.state == WrestlerState.STANDING:
-                lock_ok = bool(self._move_is_legal(MOVE_LOCK_UP, self.player, self.cpu) and self._passes_moveset(self.player, MOVE_LOCK_UP))
+                lock_ok = bool(
+                    self._passes_moveset(self.player, MOVE_LOCK_UP)
+                    and self.player.state == WrestlerState.STANDING
+                    and self.cpu.state == WrestlerState.STANDING
+                    and (not bool(getattr(self.player, "is_groggy", False)))
+                )
                 lock_btn = Button(
-                    text="[b]LOCK UP[/b]" if lock_ok else "LOCK UP\n(needs both standing + 2 grit)",
+                    text=(
+                        "[b]LOCK UP[/b]"
+                        if lock_ok
+                        else "[b]LOCK UP[/b]\n[size=13sp]Need both standing[/size]"
+                        if self.cpu.state != WrestlerState.STANDING
+                        else "[b]LOCK UP[/b]\n[size=13sp]You are groggy[/size]"
+                        if bool(getattr(self.player, "is_groggy", False))
+                        else "[b]LOCK UP[/b]\n[size=13sp]Not in moveset[/size]"
+                    ),
                     markup=True,
                     size_hint_x=1,
                     size_hint_y=None,
@@ -2341,20 +2436,36 @@ class WrestleApp(App):
                 self._render_moves_ui()
                 self._update_control_bar()
 
+            def buy_lockup_edge(_inst=None) -> None:
+                if self.player.hype < 50:
+                    return
+                if bool(getattr(self.player, "lockup_edge_ready", False)):
+                    return
+                self.player.hype -= 50
+                self.player.lockup_edge_ready = True
+                self._log("Hype Shop: Lock Up Edge purchased (next Lock Up you initiate auto-wins).")
+                self._update_hud()
+                self._render_moves_ui()
+                self._update_control_bar()
+
             b1 = Button(text="Pump Up\n(25 Hype): Next card +1", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
             b2 = Button(text="Adrenaline\n(50 Hype): Next card +2", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
+            b_edge = Button(text="Lock Up Edge\n(50 Hype): Auto-win next Lock Up", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
             b_grit = Button(text="Grit Refill\n(30 Hype): +4 Grit", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
             b3 = Button(text="Second Wind\n(80 Hype): Heal 15 HP", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
             b1.disabled = self.player.hype < 25
             b2.disabled = self.player.hype < 50
+            b_edge.disabled = (self.player.hype < 50) or bool(getattr(self.player, "lockup_edge_ready", False))
             b_grit.disabled = (self.player.hype < 30) or (int(self.player.grit) >= int(self.player.max_grit))
             b3.disabled = self.player.hype < 80
             b1.bind(on_release=buy_pump)
             b2.bind(on_release=buy_adrenaline)
+            b_edge.bind(on_release=buy_lockup_edge)
             b_grit.bind(on_release=buy_grit_refill)
             b3.bind(on_release=buy_second_wind)
             self.move_list_layout.add_widget(b1)
             self.move_list_layout.add_widget(b2)
+            self.move_list_layout.add_widget(b_edge)
             self.move_list_layout.add_widget(b_grit)
             self.move_list_layout.add_widget(b3)
             return
@@ -2438,7 +2549,7 @@ class WrestleApp(App):
 
                 star = "★ " if finisher else ""
                 dmg = int(mv.get('damage', 0))
-                mc = int(mv.get('cost', 0))
+                mc = int(self._move_base_cost(slug))
                 if slug == MOVE_DEFENSIVE:
                     label = f"[b]{star}{disp}[/b]\n[size=13sp]Discard (≤5) to Block[/size]"
                 elif slug == MOVE_FIGHT_FOR_CONTROL:
@@ -2498,8 +2609,7 @@ class WrestleApp(App):
             # Better diagnostics to avoid confusion.
             reasons: list[str] = []
             try:
-                mv = MOVES.get(MOVE_LOCK_UP, {})
-                cost = int(mv.get("cost", 0))
+                cost = int(self._move_base_cost(MOVE_LOCK_UP))
                 if int(self.player.grit) < cost:
                     reasons.append(f"need {cost} grit")
                 if self.player.state != WrestlerState.STANDING:
@@ -2512,6 +2622,13 @@ class WrestleApp(App):
                 pass
             tail = (" (" + ", ".join(reasons) + ")") if reasons else ""
             self._log("Lock Up is not legal right now." + tail)
+            return
+
+        # Hype Shop buff: next Lock Up you initiate is an auto-win.
+        if bool(getattr(self.player, "lockup_edge_ready", False)):
+            self.player.lockup_edge_ready = False
+            self._log("Lock Up Edge! You seize control instantly!")
+            self._apply_lockup_result(True)
             return
 
         self._lockup_minigame(on_done=self._apply_lockup_result)
