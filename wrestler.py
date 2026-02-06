@@ -14,6 +14,7 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
     "strike_jab",
     "strike_front_kick",
     "strike_spinning_backfist",
+    "strike_haymaker",
     "strike_desperation_slap",
     "grap_lock_up",
     "util_taunt",
@@ -37,9 +38,14 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
     "util_stop_short",
     "strike_rebound_lariat",
     "util_charge",
+    "strike_running_shoulder_block",
     "strike_running_clothesline",
     "strike_running_big_boot",
     "strike_running_stomp",
+    "strike_sliding_dropkick",
+    "strike_tree_shaker",
+    "grap_running_bulldog",
+    "grap_running_hurricanrana",
     # Grounded / finish
     "strike_stomp",
     "strike_upkick",
@@ -47,6 +53,8 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
     "util_pick_up",
     "pin_pin",
     "sub_submission_hold",
+    "sub_ankle_lock",
+    "sub_sharpshooter",
     # Whip defense
     "util_regain_balance",
     "strike_trip",
@@ -59,6 +67,8 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
     # Top rope
     "air_climb_turnbuckle",
     "air_climb_down",
+    "air_elbow_drop",
+    "air_leg_drop",
     "air_diving_elbow",
     "air_moonsault",
     "air_frog_splash",
@@ -124,6 +134,9 @@ class Wrestler:
 
     # Status
     stun_turns: int = 0
+
+    # Dazed meter (modifier, not a position)
+    daze_turns: int = 0
 
     # Groggy beat (interactive stun)
     is_groggy: bool = False
@@ -376,7 +389,18 @@ class Wrestler:
         # If we just got knocked down, seed the stand-up meter.
         if new_state == WrestlerState.GROUNDED and self.state != WrestlerState.GROUNDED:
             # More damage taken (lower HP%) -> harder to rise.
-            self.stun_meter = 10 + int(20 * (1.0 - float(self.hp_pct())))
+            # Keep early knockdowns snappy; make late-match knockdowns stickier.
+            hp_pct = float(self.hp_pct())
+            missing = max(0.0, min(1.0, 1.0 - hp_pct))
+            base = 3
+            scale = 14
+            meter = int(base + round(scale * missing))
+            try:
+                if int(getattr(self, "daze_turns", 0) or 0) > 0:
+                    meter += 2
+            except Exception:
+                pass
+            self.stun_meter = max(0, int(meter))
         self.state = new_state
 
         # Leaving grapple tiers should also clear the role.
