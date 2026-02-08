@@ -2733,8 +2733,12 @@ class WrestleApp(App):
 
             parts = pending_mod_parts(card)
             if parts:
-                mods_txt = "  " + "  ".join(parts)
-                text = f"[b][size=22sp]{int(card.value)}[/size][/b]\n[size=12sp][color={COLOR_HEX_SETUP_LOG}]{mods_txt}[/color][/size]"
+                mods_txt = " | ".join(parts)
+                # Single-line to avoid mobile clipping (two-line markup can hide the value).
+                text = (
+                    f"[b][size=22sp]{int(card.value)}[/size][/b] "
+                    f"[size=12sp][color={COLOR_HEX_SETUP_LOG}]+{mods_txt}[/color][/size]"
+                )
                 markup = True
             else:
                 text = str(card.value)
