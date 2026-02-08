@@ -409,7 +409,9 @@ class BorderedButton(Button):
         def _fit_text(*_a) -> None:
             try:
                 if not bool(getattr(self, "auto_wrap", True)):
-                    self.text_size = (None, None)
+                    # Still constrain text to widget bounds so halign/valign works
+                    # and multi-line text ("\n") doesn't clip the first line.
+                    self.text_size = self.size
                     return
                 pad_x = dp(12)
                 pad_y = dp(10)
@@ -2750,8 +2752,6 @@ class WrestleApp(App):
                 btn.halign = "center"
                 btn.valign = "middle"
                 btn.padding = [dp(4), dp(4)]
-                btn.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
-                btn.text_size = btn.size
             except Exception:
                 pass
             btn.border_color = list(COLOR_CARD_SELECTED)
