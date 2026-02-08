@@ -1,0 +1,41 @@
+WrestleText Match Log
+Started: 2026-02-08 01:38:43.876100
+YOU vs CPU
+
+> ────────────────────────
+> Score: YOU 7+dbl0+col2+bon0+mod0+chain0+mom0=9 | CPU 10+dbl5+col0+bon0+mod0+chain0+mom0=15
+> Johnny CPU wins the clash! Mr. User was going for Haymaker (8), but Johnny CPU beats them to it with Haymaker (15) (Cards: 10, 10)! 
+> Johnny CPU uses Haymaker! A wild, swinging punch that drops them!
+> Doubles hit! Damage boosted.
+> Mr. User takes 15 dmg.
+> Mr. User stays on their feet!
+> CPU wins the lock up and takes control!
+> ────────────────────────
+> Score: YOU 10+dbl0+col1+bon0+mod0+chain0+mom0=11 | CPU 12+dbl0+col0+bon0+mod0+chain0+mom1=13
+> TIE BREAK! Mr. User muscles through on Strength.
+> Mr. User wins the clash! Johnny CPU was going for Shove Off (11), but Mr. User beats them to it with Knee to Gut (11) (Cards: 10)!
+> Mr. User uses Knee to Gut! You drive a hard knee into the midsection.
+> Johnny CPU takes 8 dmg.
+> ────────────────────────
+> Score: YOU 8+dbl0+col2+bon0+mod0+chain0+mom0=10 | CPU 4+dbl5+col0+bon0+mod0+chain0+mom0=9
+> Mr. User wins the clash! Johnny CPU was going for Fight For Control (9), but Mr. User beats them to it with Snap Suplex (10) (Cards: 1, 7)!
+> Johnny CPU: Passive Regen (+2 Grit).
+> Mr. User uses Snap Suplex! Hooks the waist and snaps Johnny CPU down!
+> Johnny CPU takes 11 dmg.
+> ────────────────────────
+> Score: YOU 3+dbl0+col0+bon0+mod0+chain0+mom1=4 | CPU 3+dbl0+col0+bon0+mod0+chain0+mom0=3
+> Mr. User wins the clash! Johnny CPU was going for Upkick (3), but Mr. User beats them to it with Climb Turnbuckle (4) (Cards: 3)!
+> Mr. User uses Climb Turnbuckle! You scale the turnbuckles and steady your footing...
+> ────────────────────────
+> Score: YOU 10+dbl0+col1+bon0+mod0+chain0+mom1=12 | CPU 14+dbl0+col0+bon0+mod0+chain0+mom0=14
+> Mr. User wins the clash! Johnny CPU was going for Slow Stand Up (10), but Mr. User beats them to it with Shooting Star Press (12) (Cards: 10)!
+> Mr. User uses Shooting Star Press! A full rotation—SHOOTING STAR PRESS! Unreal hangtime!
+> Johnny CPU takes 18 dmg.
+> ────────────────────────
+> Score: YOU 1+dbl0+col0+bon0+mod0+chain0+mom1=2 | CPU DEF
+> Quiet beat: Defense meets a non-attack — both actions resolve.
+> Mr. User: Passive Regen (+2 Grit).
+> Johnny CPU: Passive Regen (+1 Grit).
+> Mr. User uses Slow Stand Up! You crawl toward the ropes and try to rise...
+> Struggling to rise... (Stun: 4 left)
+> Johnny CPU uses Defensive! Johnny CPU brace, slip away, and buy Johnny CPU'sself a beat...

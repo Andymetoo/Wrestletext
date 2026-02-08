@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 # GRAY: Neutral (no bonus)
 # RED: Strike
 # BLUE: Grapple
-# GREEN: Submission/Pin
-# YELLOW: Aerial/Special
+# GREEN: Submission/Pin/Aerial
+# YELLOW: Wild (matches any attack type)
 COLORS: list[str] = ["GRAY", "RED", "BLUE", "GREEN", "YELLOW"]
 HEX_COLORS: dict[str, str] = {
     "GRAY": "#777777",
@@ -40,11 +40,14 @@ class Card:
         """
         if self.color == "GRAY":
             return 0
+        # Wild cards: match any attack-type move.
+        if self.color == "YELLOW":
+            return 1 if move_type in {"Strike", "Grapple", "Submission", "Aerial", "Pin"} else 0
         mapping = {
             "Strike": "RED",
             "Grapple": "BLUE",
             "Submission": "GREEN",
-            "Aerial": "YELLOW",
+            "Aerial": "GREEN",
             "Pin": "GREEN",
             # NOTE: Setup moves do not get a color bonus.
         }
@@ -78,7 +81,10 @@ class Deck:
                 if random.random() < gray_chance:
                     color = "GRAY"
                 else:
-                    color = random.choice([c for c in COLORS if c != "GRAY"])
+                    # Make wild (YELLOW) rarer than the main type colors.
+                    pool = ["RED", "BLUE", "GREEN", "YELLOW"]
+                    weights = [40, 40, 40, 8]
+                    color = random.choices(pool, weights=weights, k=1)[0]
                 cards.append(Card(value=int(val), color=color))
 
         # Ensure exactly 50 cards.
