@@ -384,6 +384,7 @@ class BorderedButton(Button):
     border_color = ListProperty([1, 1, 1, 1])
     border_width = NumericProperty(2.0)
     show_border = BooleanProperty(False)
+    auto_wrap = BooleanProperty(True)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -407,6 +408,9 @@ class BorderedButton(Button):
 
         def _fit_text(*_a) -> None:
             try:
+                if not bool(getattr(self, "auto_wrap", True)):
+                    self.text_size = (None, None)
+                    return
                 pad_x = dp(12)
                 pad_y = dp(10)
                 self.text_size = (max(0, self.width - pad_x), max(0, self.height - pad_y))
@@ -416,6 +420,7 @@ class BorderedButton(Button):
         self.bind(size=_fit_text)
         self.bind(pos=_fit_text)
         self.bind(text=_fit_text)
+        self.bind(auto_wrap=_fit_text)
         _fit_text()
 
         with self.canvas.after:
@@ -1072,9 +1077,10 @@ class WrestleApp(App):
 
         out = str(text)
         out = out.replace("You're", f"{attacker_ref} are")
-        out = out.replace("You", attacker_ref)
+        # Order matters: handle possessives before plain "You" to avoid corrupting "Your".
         out = out.replace("Your", attacker_poss.capitalize())
         out = out.replace("your", attacker_poss)
+        out = out.replace("You", attacker_ref)
         out = out.replace("They", attacker_ref)
         out = out.replace("Their", attacker_poss.capitalize())
         out = out.replace(" them ", f" {defender_ref} ")
@@ -1083,7 +1089,37 @@ class WrestleApp(App):
         out = out.replace(" Their ", f" {defender_poss.capitalize()} ")
         return out
 
-    def _move_is_legal(self, move_name: str, user: Wrestler, target: Wrestler) -> bool:
+    def _momentum_advantage_for(self, wrestler: Wrestler) -> int:
+        """Return signed momentum advantage from the wrestler's perspective.
+
+        Global momentum is stored as player-favoring (positive => player advantage).
+        """
+        m = int(getattr(self, "momentum", 0) or 0)
+        if wrestler is self.player:
+            return m
+        return -m
+
+    def _move_req_momentum_min(self, move_name: str) -> int:
+        try:
+            return max(0, int(MOVES.get(str(move_name), {}).get("req_momentum_min", 0) or 0))
+        except Exception:
+            return 0
+
+    def _has_momentum_for_move(self, wrestler: Wrestler, move_name: str) -> bool:
+        req = int(self._move_req_momentum_min(move_name))
+        if req <= 0:
+            return True
+        return int(self._momentum_advantage_for(wrestler)) >= int(req)
+
+    def _move_display_name(self, move_name: str) -> str:
+        mv = MOVES.get(str(move_name), {})
+        disp = str(mv.get("name", move_name))
+        req = int(self._move_req_momentum_min(move_name))
+        if req > 0:
+            disp = f"{disp}{'*' * req}"
+        return disp
+
+    def _move_is_legal(self, move_name: str, user: Wrestler, target: Wrestler, *, ignore_momentum_gate: bool = False) -> bool:
         mv = MOVES[move_name]
         ru = str(mv.get("req_user_state", "ANY"))
         rt = str(mv.get("req_target_state", "ANY"))
@@ -1165,6 +1201,11 @@ class WrestleApp(App):
             if not (neutral_ok or user_dis or tossed_ok or grounded_ok):
                 return False
 
+        # --- Momentum gating ---
+        if not bool(ignore_momentum_gate):
+            if not self._has_momentum_for_move(user, move_name):
+                return False
+
         return True
 
     def _auto_move_cost(self, move_name: str) -> int:
@@ -1211,8 +1252,13 @@ class WrestleApp(App):
             return True
         return move_name in set(wrestler.moveset)
 
-    def _available_moves(self, user: Wrestler, target: Wrestler) -> list[str]:
-        names = [n for n in MOVES.keys() if self._move_is_legal(n, user, target) and self._passes_moveset(user, n)]
+    def _available_moves(self, user: Wrestler, target: Wrestler, *, ignore_momentum_gate: bool = False) -> list[str]:
+        names = [
+            n
+            for n in MOVES.keys()
+            if self._move_is_legal(n, user, target, ignore_momentum_gate=ignore_momentum_gate)
+            and self._passes_moveset(user, n)
+        ]
 
         if user.state == WrestlerState.STANDING and target.state == WrestlerState.STANDING:
             allowed_names = {MOVE_LOCK_UP, MOVE_TAUNT, MOVE_DEFENSIVE}
@@ -1224,7 +1270,11 @@ class WrestleApp(App):
                 return (t == "Strike") or (n in allowed_names) or (t == "Setup" and su in {"RUNNING", "TOP_ROPE"})
 
             names = [n for n in names if neutral_ok(n)]
-            if self._move_is_legal(MOVE_REST, user, target) and self._passes_moveset(user, MOVE_REST):
+            if (
+                MOVE_REST not in names
+                and self._move_is_legal(MOVE_REST, user, target, ignore_momentum_gate=ignore_momentum_gate)
+                and self._passes_moveset(user, MOVE_REST)
+            ):
                 names.append(MOVE_REST)
 
         def key(n: str) -> tuple[int, int, str]:
@@ -2682,7 +2732,7 @@ class WrestleApp(App):
             parts = pending_mod_parts(card)
             if parts:
                 mods_txt = "  " + "  ".join(parts)
-                text = f"[b][size=24sp]{int(card.value)}[/size][/b]\n[size=11sp][color={COLOR_HEX_SETUP_LOG}]{mods_txt}[/color][/size]"
+                text = f"[b][size=22sp]{int(card.value)}[/size][/b]\n[size=12sp][color={COLOR_HEX_SETUP_LOG}]{mods_txt}[/color][/size]"
                 markup = True
             else:
                 text = str(card.value)
@@ -2694,6 +2744,16 @@ class WrestleApp(App):
                 background_color=bg, background_normal="",
                 font_size='24sp', bold=True
             )
+            # Hand cards should center cleanly and avoid awkward wrapping/clipping.
+            try:
+                btn.auto_wrap = False
+                btn.halign = "center"
+                btn.valign = "middle"
+                btn.padding = [dp(4), dp(4)]
+                btn.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
+                btn.text_size = btn.size
+            except Exception:
+                pass
             btn.border_color = list(COLOR_CARD_SELECTED)
             btn.border_width = float(dp(2))
             btn.show_border = bool(selected)
@@ -2716,7 +2776,8 @@ class WrestleApp(App):
             self._set_menu_stage("MOVES", category=key)
 
     def _category_has_moves(self, category: str) -> bool:
-        moves = self._available_moves(self.player, self.cpu)
+        # Include momentum-gated moves so categories remain visible (they'll render disabled inside).
+        moves = self._available_moves(self.player, self.cpu, ignore_momentum_gate=True)
         if category == "STRIKES":
             return any(MOVES[m].get("type") == "Strike" for m in moves)
         if category == "GRAPPLES":
@@ -2996,11 +3057,11 @@ class WrestleApp(App):
                 self._render_moves_ui()
                 self._update_control_bar()
 
-            b1 = Button(text="Pump Up\n(25 Hype): Next card +1", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
-            b2 = Button(text="Adrenaline\n(50 Hype): Next card +2", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
-            b_edge = Button(text="Lock Up Edge\n(50 Hype): Auto-win next Lock Up", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
-            b_grit = Button(text="Grit Refill\n(30 Hype): +4 Grit", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
-            b3 = Button(text="Second Wind\n(80 Hype): Heal 15 HP", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
+            b1 = BorderedButton(text="Pump Up\n(25 Hype): Next card +1", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
+            b2 = BorderedButton(text="Adrenaline\n(50 Hype): Next card +2", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
+            b_edge = BorderedButton(text="Lock Up Edge\n(50 Hype): Auto-win next Lock Up", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
+            b_grit = BorderedButton(text="Grit Refill\n(30 Hype): +4 Grit", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
+            b3 = BorderedButton(text="Second Wind\n(80 Hype): Heal 15 HP", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
             b1.disabled = self.player.hype < 25
             b2.disabled = self.player.hype < 50
             b_edge.disabled = (self.player.hype < 50) or bool(getattr(self.player, "lockup_edge_ready", False))
@@ -3021,7 +3082,8 @@ class WrestleApp(App):
         # Moves within category
         if self._menu_stage == "MOVES":
             cat = str(self._selected_category or "UTILITY")
-            avail = self._available_moves(self.player, self.cpu)
+            # Show momentum-gated moves, but render them disabled until eligible.
+            avail = self._available_moves(self.player, self.cpu, ignore_momentum_gate=True)
 
             def in_cat(name: str) -> bool:
                 t = str(MOVES[name].get("type", "Setup"))
@@ -3086,11 +3148,13 @@ class WrestleApp(App):
             has_doubles = self.player.has_doubles_in_hand()
             for slug in moves_to_show:
                 mv = MOVES[slug]
-                disp = str(mv.get("name", slug))
+                disp = self._move_display_name(slug)
                 finisher = bool(mv.get("is_finisher"))
                 mc = int(self._move_base_cost(slug))
                 no_grit = int(self.player.grit) < int(mc)
-                disabled = bool((finisher and (not has_doubles)) or no_grit)
+                gate_req = int(self._move_req_momentum_min(slug))
+                gate_locked = bool(gate_req > 0 and (not self._has_momentum_for_move(self.player, slug)))
+                disabled = bool((finisher and (not has_doubles)) or no_grit or gate_locked)
                 t = str(mv.get("type", "Setup"))
 
                 if finisher and not disabled:
@@ -3121,6 +3185,8 @@ class WrestleApp(App):
                     label = f"[b]{star}{disp}[/b]\n[size=13sp]{dmg} DMG | [color={COLOR_HEX_GRIT}]{mc} GRIT[/color][/size]"
                 if no_grit and slug not in {MOVE_DEFENSIVE, MOVE_FIGHT_FOR_CONTROL}:
                     label = label + f"\n[size=12sp][color={COLOR_HEX_HP_STRAINED}]NO GRIT[/color][/size]"
+                if gate_locked:
+                    label = label + f"\n[size=12sp][color={COLOR_HEX_HP_STRAINED}]NEED {gate_req} MOMENTUM[/color][/size]"
                 btn = BorderedButton(
                     text=label,
                     markup=True,
@@ -3141,6 +3207,16 @@ class WrestleApp(App):
     def _on_move_click(self, instance):
         name = str(getattr(instance, "move_name", ""))
         if not name:
+            return
+
+        # Momentum-gated moves can be visible but disabled; guard here too.
+        if not self._move_is_legal(name, self.player, self.cpu):
+            req = int(self._move_req_momentum_min(name))
+            if req > 0:
+                have = int(self._momentum_advantage_for(self.player))
+                self._log(f"Need momentum {req} (you have {have}).")
+            else:
+                self._log("That move isn't legal right now.")
             return
 
         # Lock Up resolves immediately (no card selection).
@@ -3441,6 +3517,11 @@ class WrestleApp(App):
                 enabled = (selected_count in {0, 1, 2}) and (selected_count == 0 or bool(cards))
             else:
                 enabled = (selected_count in {1, 2}) and bool(cards)
+
+            if enabled:
+                # Final legality check (includes momentum gate).
+                if not self._move_is_legal(move_name, self.player, self.cpu):
+                    enabled = False
 
             if enabled:
                 cost = self._effective_cost(self.player, move_name, cards)
