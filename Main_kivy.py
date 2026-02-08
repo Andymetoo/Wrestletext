@@ -387,6 +387,37 @@ class BorderedButton(Button):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
+        # Mobile-friendly text behavior: wrap within bounds and center.
+        # Individual callers can override these properties via kwargs.
+        try:
+            if not hasattr(self, "halign") or self.halign is None:
+                self.halign = "center"
+            if not hasattr(self, "valign") or self.valign is None:
+                self.valign = "middle"
+        except Exception:
+            pass
+
+        try:
+            # Provide some padding so glyphs don't hit edges.
+            if not getattr(self, "padding", None):
+                self.padding = [dp(6), dp(6)]
+        except Exception:
+            pass
+
+        def _fit_text(*_a) -> None:
+            try:
+                pad_x = dp(12)
+                pad_y = dp(10)
+                self.text_size = (max(0, self.width - pad_x), max(0, self.height - pad_y))
+            except Exception:
+                pass
+
+        self.bind(size=_fit_text)
+        self.bind(pos=_fit_text)
+        self.bind(text=_fit_text)
+        _fit_text()
+
         with self.canvas.after:
             from kivy.graphics import Color, Line
 
@@ -761,8 +792,12 @@ class WrestleApp(App):
             color=COLOR_TEXT_HINT,
             halign="left",
             valign="middle",
+            font_size="12sp",
+            shorten=True,
+            shorten_from="right",
+            max_lines=2,
         )
-        self.hint_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, None)))
+        self.hint_label.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, inst.height)))
 
         self.play_btn = Button(
             text="PLAY\n(0 Grit)",
