@@ -2733,16 +2733,12 @@ class WrestleApp(App):
 
             parts = pending_mod_parts(card)
             if parts:
-                mods_txt = " | ".join(parts)
-                # Single-line to avoid mobile clipping (two-line markup can hide the value).
-                text = (
-                    f"[b][size=22sp]{int(card.value)}[/size][/b] "
-                    f"[size=12sp][color={COLOR_HEX_SETUP_LOG}]+{mods_txt}[/color][/size]"
-                )
-                markup = True
+                # Keep value first and truncate modifiers if space is tight.
+                mods_txt = " ".join(str(p) for p in parts)
+                text = f"{int(card.value)} {mods_txt}"
             else:
                 text = str(card.value)
-                markup = False
+            markup = False
 
             btn = BorderedButton(
                 text=text,
@@ -2756,6 +2752,9 @@ class WrestleApp(App):
                 btn.halign = "center"
                 btn.valign = "middle"
                 btn.padding = [dp(4), dp(4)]
+                btn.shorten = True
+                btn.shorten_from = "right"
+                btn.max_lines = 1
             except Exception:
                 pass
             btn.border_color = list(COLOR_CARD_SELECTED)
