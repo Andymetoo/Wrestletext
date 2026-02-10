@@ -2450,11 +2450,11 @@ class WrestleApp(App):
         except Exception:
             pass
 
-        # Groggy beat resolution: recovery clears groggy regardless of outcome.
+        # Groggy recovery: apply progress regardless of clash outcome.
         if str(p_move) == MOVE_GROGGY_RECOVERY:
-            self.player.is_groggy = False
+            self._apply_groggy_recovery_attempt(self.player, list(p_cards or []))
         if str(c_move) == MOVE_GROGGY_RECOVERY:
-            self.cpu.is_groggy = False
+            self._apply_groggy_recovery_attempt(self.cpu, list(c_cards or []))
 
         # Momentum update (after resolution): winning shifts MOM; big reversals reset toward center.
         if (not simultaneous) and (winner is not None) and (w_move is not None):
@@ -2492,6 +2492,75 @@ class WrestleApp(App):
         pct = max(0.0, min(1.0, float(victim_hp_pct)))
         v = 1 + int(25.0 * (1.0 - pct))
         return max(1, min(26, int(v)))
+
+    def _seed_groggy_meter(self, victim: Wrestler) -> int:
+        """HP-scaled groggy recovery threshold.
+
+        Lower HP => higher meter => more recovery plays needed.
+        """
+        try:
+            hp_pct = float(victim.hp_pct())
+        except Exception:
+            hp_pct = 1.0
+        missing = max(0.0, min(1.0, 1.0 - float(hp_pct)))
+        base = 8
+        scale = 16
+        meter = int(base + round(scale * missing))
+
+        # If already DAZED, make the groggy a bit stickier.
+        try:
+            if int(getattr(victim, "daze_turns", 0) or 0) > 0:
+                meter += 2
+        except Exception:
+            pass
+
+        return max(8, min(26, int(meter)))
+
+    def _groggy_progress_from_cards(self, cards: list) -> int:
+        if not cards:
+            return 0
+
+        def v(c) -> int:
+            try:
+                return min(7, int(c.value))
+            except Exception:
+                return 0
+
+        if len(cards) == 2:
+            same_val = (int(cards[0].value) == int(cards[1].value))
+            same_col = (str(cards[0].color) == str(cards[1].color)) and (str(cards[0].color) != "GRAY")
+            if same_val:
+                return int(v(cards[0])) + 5
+            if same_col:
+                hi = max(int(v(cards[0])), int(v(cards[1])))
+                return int(min(10, int(hi) + 2))
+        return int(sum(int(v(c)) for c in cards))
+
+    def _apply_groggy_recovery_attempt(self, who: Wrestler, cards: list) -> None:
+        if not bool(getattr(who, "is_groggy", False)):
+            return
+
+        # While recovering, you're still a little vulnerable.
+        try:
+            who.next_damage_taken_multiplier = max(float(getattr(who, "next_damage_taken_multiplier", 1.0)), 1.25)
+        except Exception:
+            pass
+
+        before = int(getattr(who, "groggy_meter", 0) or 0)
+        if before <= 0:
+            who.is_groggy = False
+            who.groggy_meter = 0
+            return
+
+        progress = int(self._groggy_progress_from_cards(list(cards or [])))
+        who.groggy_meter = max(0, int(before) - int(progress))
+
+        if int(who.groggy_meter) <= 0:
+            who.is_groggy = False
+            who.groggy_meter = 0
+            self._log(f"{self._fmt_name(who)} shakes off the stun!")
+        else:
+            self._log(f"Stunned... (Groggy: {int(who.groggy_meter)} left)")
 
     def _begin_escape(self, *, attacker: Wrestler, defender: Wrestler, kind: str, move_name: str | None = None) -> None:
         threshold = self._escape_threshold(defender.hp_pct())
@@ -2756,10 +2825,9 @@ class WrestleApp(App):
             return
 
         if move_name == MOVE_GROGGY_RECOVERY:
-            # Clears groggy and leaves you vulnerable if hit next beat.
-            attacker.is_groggy = False
+            # Recovery progress is applied after the beat resolves (even if you lose the clash).
+            # This hook only sets the vulnerability tag.
             attacker.next_damage_taken_multiplier = max(float(getattr(attacker, "next_damage_taken_multiplier", 1.0)), 1.25)
-            self._log(f"{self._fmt_name(attacker)} tries to steady themselves... (VULNERABLE)")
             return
 
         if move_name == MOVE_TAUNT:
@@ -2832,6 +2900,9 @@ class WrestleApp(App):
                         defender.daze_turns = max(int(getattr(defender, "daze_turns", 0) or 0), int(turns))
                         try:
                             defender.is_groggy = True
+                            seed = int(self._seed_groggy_meter(defender))
+                            cur = int(getattr(defender, "groggy_meter", 0) or 0)
+                            defender.groggy_meter = max(int(cur), int(seed))
                         except Exception:
                             pass
                         self._log(f"{self._fmt_name(defender)} is DAZED! ({int(defender.daze_turns)})")
@@ -2847,12 +2918,18 @@ class WrestleApp(App):
                         defender.daze_turns = 0
                         if before > 0:
                             self._log(f"{self._fmt_name(defender)} snaps back to reality from the shock!")
+                        try:
+                            defender.is_groggy = False
+                            defender.groggy_meter = 0
+                        except Exception:
+                            pass
                     else:
                         defender.daze_turns = max(0, int(before) - 1)
                         if before > 0 and int(defender.daze_turns) == 0:
                             self._log(f"{self._fmt_name(defender)} is shaken awake by the impact!")
                             try:
                                 defender.is_groggy = False
+                                defender.groggy_meter = 0
                             except Exception:
                                 pass
             except Exception:
@@ -3088,6 +3165,8 @@ class WrestleApp(App):
         return random.choice(ordered)
 
     def _cpu_choose_cards(self, move_name, *, mode: str | None = None):
+        if str(move_name) == MOVE_REST:
+            return []
         hand = list(self.cpu.hand or [])
         if not hand:
             return []
@@ -3104,7 +3183,7 @@ class WrestleApp(App):
         move_cost = int(MOVES.get(move_name, {}).get("cost", 0))
 
         defensive_only_small = (move_name == MOVE_DEFENSIVE)
-        groggy_only_small = False
+        groggy_only_small = (move_name == MOVE_GROGGY_RECOVERY)
 
         candidates: list[dict] = []
 
@@ -3255,7 +3334,11 @@ class WrestleApp(App):
 
         def grog(w: Wrestler) -> str:
             if bool(getattr(w, "is_groggy", False)):
-                return " [GROGGY]"
+                try:
+                    gm = int(getattr(w, "groggy_meter", 0) or 0)
+                except Exception:
+                    gm = 0
+                return f" [GROGGY {gm}]" if gm > 0 else " [GROGGY]"
             return ""
 
         def dazed(w: Wrestler) -> str:
@@ -3600,6 +3683,10 @@ class WrestleApp(App):
         # Categories
         if self._menu_stage == "CATEGORIES":
             if bool(getattr(self.player, "is_groggy", False)):
+                try:
+                    gm = int(getattr(self.player, "groggy_meter", 0) or 0)
+                except Exception:
+                    gm = 0
                 lbl = Label(
                     text="[b]STUNNED![/b]\nTry to recover — max card value 7.",
                     markup=True,
@@ -3609,6 +3696,8 @@ class WrestleApp(App):
                     halign="left",
                     valign="middle",
                 )
+                if gm > 0:
+                    lbl.text = f"[b]STUNNED![/b]  (Groggy: {gm} left)\nTry to recover — max card value 7."
                 lbl.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, None)))
                 self.move_list_layout.add_widget(lbl)
 
@@ -4259,7 +4348,11 @@ class WrestleApp(App):
         # Hint
         if self._menu_stage == "CATEGORIES":
             if bool(getattr(self.player, "is_groggy", False)):
-                self.hint_label.text = "GROGGY! Pick Groggy Recovery."
+                try:
+                    gm = int(getattr(self.player, "groggy_meter", 0) or 0)
+                except Exception:
+                    gm = 0
+                self.hint_label.text = f"GROGGY! Pick Groggy Recovery. ({gm} left)" if gm > 0 else "GROGGY! Pick Groggy Recovery."
             else:
                 self.hint_label.text = "Pick a category."
         elif self._menu_stage == "HYPE_SHOP":
@@ -4368,7 +4461,10 @@ class WrestleApp(App):
             return
 
         p_cards = self._selected_player_cards()
-        if self.selected_move == MOVE_DEFENSIVE:
+        if self.selected_move == MOVE_REST:
+            # Rest is explicitly a no-card action.
+            p_cards = []
+        elif self.selected_move == MOVE_DEFENSIVE:
             if len(p_cards) > 2:
                 self._log("Defensive: discard up to 2 cards (value ≤ 5).")
                 return

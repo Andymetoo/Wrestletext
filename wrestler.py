@@ -145,6 +145,9 @@ class Wrestler:
     # Groggy beat (interactive stun)
     is_groggy: bool = False
 
+    # Groggy recovery meter (counts down while is_groggy)
+    groggy_meter: int = 0
+
     # AI memory (used for repetition penalties)
     last_move_name: str | None = None
 

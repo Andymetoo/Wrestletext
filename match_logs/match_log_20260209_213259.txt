@@ -1,0 +1,98 @@
+WrestleText Match Log
+Started: 2026-02-09 21:27:39.118924
+YOU vs CPU
+
+> You win the lock up and take control!
+> ────────────────────────
+> Score: YOU 10+dbl0+col0+bon0+mod0+chain0+mom0=10 | CPU 0+chain0+mom0
+> Floyd Conflict Jr. wins the clash! Brad Vantage was going for Rest (0), but Floyd Conflict Jr. beats them to it with Snap Suplex (10) (Cards: 10)!
+> Floyd Conflict Jr. uses Snap Suplex! Hooks the waist and snaps Brad Vantage down!
+> Brad Vantage takes 11 dmg.
+> ────────────────────────
+> Score: YOU 3+dbl0+col1+bon0+mod0+chain0+mom1=7 | CPU 0+chain0+mom0
+> Floyd Conflict Jr. wins the clash! Brad Vantage was going for Rest (0), but Floyd Conflict Jr. beats them to it with Stomp (7) (Cards: 2, 3)!
+> Floyd Conflict Jr. uses Stomp! Boots down—no mercy!
+> Brad Vantage takes 6 dmg.
+> ────────────────────────
+> Score: YOU 10+dbl0+col1+bon0+mod0+chain0+mom1=12 | CPU 7+dbl5+col0+bon0+mod0+chain0+mom0=19
+> TIE BREAK! Brad Vantage muscles through on Strength.
+> Brad Vantage wins the clash! Floyd Conflict Jr. was going for Stomp (12), but Brad Vantage beats them to it with Slow Stand Up (12) (Cards: 7, 7)! 
+> Brad Vantage uses Slow Stand Up! Brad Vantage crawl toward the ropes and try to rise...
+> Brad Vantage fights to their feet!
+> ────────────────────────
+> Score: YOU 9+dbl5+col0+bon0+mod0+chain0+mom1=24 | CPU DEF 5
+> Floyd Conflict Jr. wins the clash! Brad Vantage was going for Defensive / Reversal (DEF 5), but Floyd Conflict Jr. beats them to it with Front Kick (15) (Cards: 9, 9)!
+> Brad Vantage: Passive Regen (+2 Grit).
+> Defensive (5): soften the blow (9->7).
+> Floyd Conflict Jr. uses Front Kick! A stiff kick to the midsection doubles Brad Vantage over!
+> Brad Vantage takes 7 dmg.
+> CPU wins the lock up and takes control!
+> ────────────────────────
+> Score: YOU 10+dbl0+col0+bon0+mod0+chain0+mom1=11 | CPU 8+dbl5+col1+bon0+mod0+chain0+mom0=22
+> Brad Vantage wins the clash! Floyd Conflict Jr. was going for Fight For Control (11), but Brad Vantage beats them to it with Headlock Takeover (14) (Cards: 8, 8)! 
+> Brad Vantage uses Headlock Takeover! Snatches a headlock and rolls through—TAKEOVER!
+> Doubles hit! Damage boosted.
+> Floyd Conflict Jr. takes 9 dmg.
+> ────────────────────────
+> Score: YOU 8+dbl0+col0+bon0+mod0+chain0+mom1=11 | CPU 10+dbl0+col0+bon0+mod0+chain0+mom0=10
+> Floyd Conflict Jr. wins the clash! Brad Vantage was going for Pin (10), but Floyd Conflict Jr. beats them to it with Kip-up (11) (Cards: 4, 8)!
+> Floyd Conflict Jr. uses Kip-up! You spring to your feet with a kip-up!
+> Floyd Conflict Jr. fights to their feet!
+> You win the lock up and take control!
+> Two-card play: must match value (doubles) OR match a non-gray color (+2 to high card).
+> ────────────────────────
+> Score: YOU 6+dbl5+col0+bon0+mod0+chain0+mom1=18 | CPU 10+dbl0+col0+bon0+mod0+chain0+mom0=10
+> Floyd Conflict Jr. wins the clash! Brad Vantage was going for Fight For Control (10), but Floyd Conflict Jr. beats them to it with Headlock Takeover (12) (Cards: 6, 6)!
+> Floyd Conflict Jr. uses Headlock Takeover! Snatches a headlock and rolls through—TAKEOVER!
+> Doubles hit! Damage boosted.
+> Brad Vantage takes 9 dmg.
+> ────────────────────────
+> Score: YOU 1+dbl5+col0+bon0+mod0+chain0+mom1=8 | CPU 5+dbl5+col0+bon0+mod0+chain0+mom0=15
+> Brad Vantage wins the clash! Floyd Conflict Jr. was going for Pin (7), but Brad Vantage beats them to it with Kip-up (10) (Cards: 5, 5)! 
+> Floyd Conflict Jr.: Passive Regen (+2 Grit).
+> Brad Vantage uses Kip-up! Brad Vantage spring to Brad Vantage's feet with a kip-up!
+> Brad Vantage fights to their feet!
+> ────────────────────────
+> Score: YOU 10+dbl0+col1+bon0+mod0+chain0+mom1=12 | CPU 10+dbl0+col0+bon0+mod0+chain0+mom0=10
+> Floyd Conflict Jr. wins the clash! Brad Vantage was going for Front Kick (10), but Floyd Conflict Jr. beats them to it with Front Kick (12) (Cards: 1, 10)!
+> Floyd Conflict Jr. uses Front Kick! A stiff kick to the midsection doubles Brad Vantage over!
+> Brad Vantage takes 7 dmg.
+> FIRE UP! Floyd Conflict Jr. ignites (2 turns): +2 to each card, no botches, wins ties.
+> Hype Shop: Grit Refill! (+4 Grit)
+> ────────────────────────
+> Score: YOU 4+dbl5+col0+bon4+mod0+chain0+mom0=17 | CPU 8+dbl0+col0+bon0+mod0+chain0+mom0=8
+> Floyd Conflict Jr. wins the clash! Brad Vantage was going for Haymaker (8), but Floyd Conflict Jr. beats them to it with Front Kick (13) (Cards: 4, 4)!
+> Floyd Conflict Jr. uses Front Kick! A stiff kick to the midsection doubles Brad Vantage over!
+> Doubles hit! Damage boosted.
+> Brad Vantage takes 9 dmg.
+> Lock Up canceled.
+> You win the lock up and take control!
+> ────────────────────────
+> Score: YOU 5+dbl5+col0+bon4+mod0+chain0+mom1=20 | CPU DEF 7
+> Floyd Conflict Jr. wins the clash! Brad Vantage was going for Defensive / Reversal (DEF 7), but Floyd Conflict Jr. beats them to it with Headlock Takeover (15) (Cards: 5, 5)!
+> Brad Vantage: Passive Regen (+1 Grit).
+> Defensive (7): soften the blow (9->6).
+> Floyd Conflict Jr. uses Headlock Takeover! Snatches a headlock and rolls through—TAKEOVER!
+> Brad Vantage takes 6 dmg.
+> ────────────────────────
+> Score: YOU 9+dbl0+col0+bon0+mod0+chain0+mom1=10 | CPU 0+chain0+mom0
+> Floyd Conflict Jr. wins the clash! Brad Vantage was going for Rest (0), but Floyd Conflict Jr. beats them to it with Pin (10) (Cards: 9)!
+> CRITICAL! Floyd Conflict Jr. catches Brad Vantage resting!
+> Floyd Conflict Jr. uses Pin! Hooks the leg! Going for the cover!
+> Floyd Conflict Jr. attempts a pinfall!
+> ONE! Brad Vantage fights out using a 9. (total 9/14)
+> TWO! Brad Vantage kicks out using a 5. (total 14/14)
+> KICKOUT AT TWO! Brad Vantage escapes!
+> ────────────────────────
+> Score: YOU 3+dbl5+col1+bon0+mod0+chain0+mom1=13 | CPU 3+dbl0+col0+bon0+mod0+chain0+mom0=3
+> Floyd Conflict Jr. wins the clash! Brad Vantage was going for Lock Up (3), but Floyd Conflict Jr. beats them to it with Jab (10) (Cards: 3, 3)!
+> Brad Vantage: Passive Regen (+1 Grit).
+> Floyd Conflict Jr. uses Jab! A quick jab snaps Brad Vantage's head back!
+> Doubles hit! Damage boosted.
+> Brad Vantage takes 7 dmg.
+> You win the lock up and take control!
+> Pick a move first (category → move), then select your card(s).
+> Select 1 card, doubles, or same-color (non-gray, +2 to high).
+> Select 1 card, doubles, or same-color (non-gray, +2 to high).
+> Select 1 card, doubles, or same-color (non-gray, +2 to high).
+> Select 1 card, doubles, or same-color (non-gray, +2 to high).
