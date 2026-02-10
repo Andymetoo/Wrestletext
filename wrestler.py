@@ -110,6 +110,10 @@ class Wrestler:
     # Card archetype (affects deck distribution)
     archetype: str = "BALANCED"  # "JOBBER" | "BALANCED" | "SUPERSTAR"
 
+    # Simulation traits (narrative/physics layer)
+    weight_class: str = "Heavy"  # "Cruiser" | "Heavy" | "Super Heavy"
+    style: str = "Balanced"      # e.g. "Striker" | "Grappler" | "Technician" | "Giant"
+
     # AI personality
     mistake_prob: float = 0.05
 
@@ -159,6 +163,12 @@ class Wrestler:
     # One-shot card modifier (Hype Shop)
     next_card_bonus: int = 0
 
+    # Turn-based buff: Fire Up (bonus to each card, tie edge, no-botch)
+    fired_up_turns_remaining: int = 0
+
+    # Pin anti-spam: pin escape threshold multiplier (smaller => easier to escape pins).
+    pin_escape_threshold_mult: float = 1.0
+
     # Card system
     deck: Deck | None = None
     hand: list[Card] | None = None
@@ -174,6 +184,18 @@ class Wrestler:
                 prof_arch = self.profile.get("archetype")
                 if prof_arch is not None:
                     self.archetype = str(prof_arch)
+            except Exception:
+                pass
+            try:
+                wc = self.profile.get("weight_class")
+                if wc is not None:
+                    self.weight_class = str(wc)
+            except Exception:
+                pass
+            try:
+                st = self.profile.get("style")
+                if st is not None:
+                    self.style = str(st)
             except Exception:
                 pass
             try:

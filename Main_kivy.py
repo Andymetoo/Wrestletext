@@ -120,6 +120,10 @@ COLOR_CARD_SELECTED = (1.00, 0.20, 0.75, 1)
 TUNING_ENABLE_PASSIVE_REGEN = True
 TUNING_GRIT_PASSIVE_REGEN = 2  # Grit recovered if you spent 0 this turn
 
+# Rest punish: if you get hit while Resting, your recovery is interrupted.
+# Additionally, the hit has a chance to become a "caught resting" critical (150% damage).
+TUNING_CAUGHT_RESTING_CRIT_CHANCE = 0.25
+
 # Botch mechanic: injured wrestlers may fail Attack moves.
 # Chance (%) = Missing_HP / TUNING_BOTCH_DIVISOR
 TUNING_BOTCH_DIVISOR = 4
@@ -147,6 +151,17 @@ REVEAL_SCORE_BREAKDOWN = True
 # Damage tuning
 DOUBLES_DAMAGE_MODIFIER = 1.25
 SUBMISSION_TICK_DAMAGE = 4
+
+# Pin anti-spam: when a defender escapes a pin, future pin escapes get easier.
+# (Threshold is multiplied by this factor each successful pin escape.)
+TUNING_PIN_ESCAPE_THRESHOLD_MULT_ON_SUCCESS = 0.75
+
+# FIRE UP!: cash in momentum to enter a short buff state.
+# - +2 bonus to each played card for a few turns (duration based on momentum tier)
+# - cannot botch while active
+# - wins clash ties while only one side is fired up
+TUNING_FIRED_UP_CARD_BONUS_PER_CARD = 2
+TUNING_CPU_FIRE_UP_CHANCE_PER_MOM = 0.10
 
 # AKI-style DAZED tuning (probabilistic, HP-based)
 TUNING_DAZE_HP_THRESHOLD = 80       # HP% above this = immune to Daze
@@ -448,7 +463,7 @@ class WrestleApp(App):
     def build(self):
         Window.clearcolor = COLOR_BG_MAIN
 
-        # --- Game Objects ---
+        # --- Game Objects (default; replaced after character select) ---
         p_prof = dict(ROSTER.get(DEFAULT_PLAYER_PROFILE, {}))
         c_prof = dict(ROSTER.get(DEFAULT_CPU_PROFILE, {}))
         self.player = Wrestler("YOU", True, profile=p_prof)
@@ -474,6 +489,9 @@ class WrestleApp(App):
         # Log capture (exportable)
         self._log_lines: list[str] = []
         self._match_started_at = datetime.now()
+
+        # HUD limb blink (warn when limb penalties are active)
+        self._limb_blink_on: bool = True
 
         # Momentum: -5..+5 (positive favors the player)
         self.momentum: int = 0
@@ -562,6 +580,14 @@ class WrestleApp(App):
         self.cpu_state_small.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
         self.player_hp_bar = ProgressBar(max=MAX_HEALTH, value=MAX_HEALTH, size_hint_y=None, height=dp(14))
         self.cpu_hp_bar = ProgressBar(max=MAX_HEALTH, value=MAX_HEALTH, size_hint_y=None, height=dp(14))
+        # Hide exact HP information (labels already use status bands).
+        try:
+            self.player_hp_bar.opacity = 0.0
+            self.cpu_hp_bar.opacity = 0.0
+            self.player_hp_bar.height = dp(0)
+            self.cpu_hp_bar.height = dp(0)
+        except Exception:
+            pass
         left_hp.add_widget(self.player_hp_label)
         left_hp.add_widget(self.player_state_small)
         left_hp.add_widget(self.player_hp_bar)
@@ -657,13 +683,13 @@ class WrestleApp(App):
         self.p_limbs = Label(
             text="",
             color=COLOR_TEXT_MUTED,
+            markup=True,
             size_hint_y=None,
             height=dp(12),
             halign="left",
             valign="middle",
             font_size="10sp",
-            shorten=True,
-            shorten_from="right",
+            shorten=False,
             max_lines=1,
         )
         self.p_limbs.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, inst.height)))
@@ -721,13 +747,13 @@ class WrestleApp(App):
         self.c_limbs = Label(
             text="",
             color=COLOR_TEXT_MUTED,
+            markup=True,
             size_hint_y=None,
             height=dp(12),
             halign="left",
             valign="middle",
             font_size="10sp",
-            shorten=True,
-            shorten_from="right",
+            shorten=False,
             max_lines=1,
         )
         self.c_limbs.bind(size=lambda inst, _v: setattr(inst, 'text_size', (inst.width, inst.height)))
@@ -745,6 +771,12 @@ class WrestleApp(App):
         hud.add_widget(hp_row)
         hud.add_widget(mom_row)
         hud.add_widget(meters_row)
+
+        # Blink the limb HUD when penalties are active.
+        try:
+            Clock.schedule_interval(self._tick_limb_blink, 0.55)
+        except Exception:
+            pass
 
         # 2. ARENA (Middle)
         arena_box = BoxLayout(orientation='vertical', size_hint_y=1)
@@ -794,6 +826,14 @@ class WrestleApp(App):
         )
         self.return_btn.bind(on_release=self._on_return_click)
 
+        self.rules_btn = Button(
+            text="RULES",
+            background_color=COLOR_BTN_BASE,
+            background_normal="",
+            size_hint_x=0.18,
+        )
+        self.rules_btn.bind(on_release=self._show_rules)
+
         self.hint_label = Label(
             text="Pick a category.",
             color=COLOR_TEXT_HINT,
@@ -816,6 +856,7 @@ class WrestleApp(App):
         self.play_btn.bind(on_release=self._on_play_click)
 
         controls.add_widget(self.return_btn)
+        controls.add_widget(self.rules_btn)
         controls.add_widget(self.hint_label)
         controls.add_widget(self.play_btn)
         main.add_widget(controls)
@@ -830,9 +871,361 @@ class WrestleApp(App):
         self._flash = ScreenFlash(size_hint=(1, 1), pos_hint={'x': 0, 'y': 0})
         root.add_widget(self._flash)
 
-        # Initial Start
-        self._start_turn("player")
+        # Character select overlay (shown by default)
+        self._build_character_select_overlay(root)
+        self._enter_character_select()
         return root
+
+    # -------------------------------------------------------------------------
+    # CHARACTER SELECT
+    # -------------------------------------------------------------------------
+
+    def _profile_short_name(self, prof: dict) -> str:
+        try:
+            s = str(prof.get("short_name", "") or "").strip()
+        except Exception:
+            s = ""
+        if s:
+            return s
+        try:
+            return str(prof.get("name", ""))
+        except Exception:
+            return ""
+
+    def _profile_type_line(self, prof: dict) -> str:
+        try:
+            wc = str(prof.get("weight_class", ""))
+        except Exception:
+            wc = ""
+        try:
+            st = str(prof.get("style", ""))
+        except Exception:
+            st = ""
+        try:
+            arch = str(prof.get("archetype", "BALANCED") or "BALANCED").upper()
+        except Exception:
+            arch = "BALANCED"
+        bits = [b for b in [wc, st] if str(b).strip()]
+        left = " ".join(bits) if bits else "Balanced"
+        return f"{left} ({arch})"
+
+    def _profile_bio_markup(self, slug: str) -> str:
+        prof = dict(ROSTER.get(str(slug), {}) or {})
+        name = str(prof.get("name", slug))
+        short = self._profile_short_name(prof)
+        tline = self._profile_type_line(prof)
+        fin = str(prof.get("finisher", ""))
+        bio = str(prof.get("bio", "") or "").strip()
+        traits = prof.get("ai_traits", {})
+        if not isinstance(traits, dict):
+            traits = {}
+        def tr(k: str) -> str:
+            try:
+                return str(int(traits.get(k, 0)))
+            except Exception:
+                return "0"
+        trait_line = f"GREED {tr('GREED')} | GOOD {tr('GOOD')} | BAD {tr('BAD')} | RND {tr('RND')}"
+        fin_line = f"Finisher: {fin}" if fin else "Finisher: (default)"
+        nm_line = f"[b]{name}[/b]  [size=12sp]({short})[/size]"
+        bio_line = bio if bio else "(No bio yet.)"
+        return f"{nm_line}\n[size=13sp]{tline}\n{fin_line}\n{trait_line}\n\n{bio_line}[/size]"
+
+    def _build_character_select_overlay(self, root) -> None:
+        # Full-screen overlay
+        sel = BoxLayout(orientation="vertical", size_hint=(1, 1), padding=PAD_SM, spacing=dp(8))
+        self._select_overlay = sel
+        try:
+            with sel.canvas.before:
+                from kivy.graphics import Color, Rectangle
+
+                self._sel_bg_color = Color(*COLOR_BG_MAIN)
+                self._sel_bg_rect = Rectangle(pos=sel.pos, size=sel.size)
+            sel.bind(pos=lambda _i, _v: setattr(self._sel_bg_rect, "pos", sel.pos))
+            sel.bind(size=lambda _i, _v: setattr(self._sel_bg_rect, "size", sel.size))
+        except Exception:
+            pass
+
+        # Header row
+        top = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(44), spacing=dp(8))
+        self._select_title = Label(
+            text="[b]SELECT PLAYER WRESTLER[/b]",
+            markup=True,
+            color=COLOR_TEXT_MAIN,
+            halign="left",
+            valign="middle",
+        )
+        self._select_title.bind(size=lambda inst, _v: setattr(inst, "text_size", (inst.width, inst.height)))
+        self._select_random_btn = Button(
+            text="RANDOM",
+            background_color=COLOR_BTN_BASE,
+            background_normal="",
+            size_hint_x=None,
+            width=dp(120),
+        )
+        self._select_random_btn.bind(on_release=self._on_select_random)
+        top.add_widget(self._select_title)
+        top.add_widget(self._select_random_btn)
+        sel.add_widget(top)
+
+        # Selection status line
+        self._select_status = Label(
+            text="Player: (none)   |   CPU: (none)",
+            color=COLOR_TEXT_SOFT,
+            size_hint_y=None,
+            height=dp(18),
+            font_size="12sp",
+            halign="left",
+            valign="middle",
+            shorten=True,
+            shorten_from="right",
+            max_lines=1,
+        )
+        self._select_status.bind(size=lambda inst, _v: setattr(inst, "text_size", (inst.width, inst.height)))
+        sel.add_widget(self._select_status)
+
+        # Scroll list of wrestlers
+        scroll = ScrollView(size_hint=(1, 1))
+        self._select_list = GridLayout(cols=1, spacing=dp(6), size_hint_y=None)
+        self._select_list.bind(minimum_height=self._select_list.setter("height"))
+        scroll.add_widget(self._select_list)
+        sel.add_widget(scroll)
+
+        # Bio box
+        bio_box = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(160))
+        self._select_bio = Label(
+            text="",
+            markup=True,
+            color=COLOR_TEXT_MAIN,
+            halign="left",
+            valign="top",
+        )
+        self._select_bio.bind(size=lambda inst, _v: setattr(inst, "text_size", (inst.width, inst.height)))
+        bio_box.add_widget(self._select_bio)
+        sel.add_widget(bio_box)
+
+        # Footer row
+        bottom = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(44), spacing=dp(8))
+        self._select_reset_btn = Button(
+            text="RESET",
+            background_color=COLOR_BTN_BASE,
+            background_normal="",
+            size_hint_x=None,
+            width=dp(120),
+        )
+        self._select_reset_btn.bind(on_release=self._on_select_reset)
+        self._select_start_btn = Button(
+            text="START",
+            background_color=get_color_from_hex(COLOR_HEX_PLAY_DISABLED),
+            background_normal="",
+            disabled=True,
+        )
+        self._select_start_btn.bind(on_release=self._on_select_start)
+        bottom.add_widget(self._select_reset_btn)
+        bottom.add_widget(self._select_start_btn)
+        sel.add_widget(bottom)
+
+        root.add_widget(sel)
+
+        # Default hidden state is "visible" (we show it on launch), but make sure
+        # the widget can be moved offscreen when not in use.
+        try:
+            sel.pos_hint = {"x": 0, "y": 0}
+        except Exception:
+            pass
+
+    def _set_character_select_visible(self, visible: bool) -> None:
+        # Kivy can still route touch events to invisible widgets if they're on top.
+        # Keep the overlay offscreen when hidden to avoid blocking the match UI.
+        try:
+            if visible:
+                self._select_overlay.disabled = False
+                self._select_overlay.opacity = 1
+                self._select_overlay.pos_hint = {"x": 0, "y": 0}
+            else:
+                self._select_overlay.disabled = True
+                self._select_overlay.opacity = 0
+                self._select_overlay.pos_hint = {"x": 2, "y": 2}
+        except Exception:
+            pass
+
+        try:
+            if visible:
+                self._main.disabled = True
+                self._main.opacity = 0
+            else:
+                self._main.disabled = False
+                self._main.opacity = 1
+        except Exception:
+            pass
+
+    def _enter_character_select(self) -> None:
+        self._select_stage = "PLAYER"  # PLAYER | CPU
+        self._selected_player_slug = None
+        self._selected_cpu_slug = None
+        self._set_character_select_visible(True)
+        self._render_character_list()
+        self._update_character_select_ui()
+
+    def _on_select_reset(self, _inst=None) -> None:
+        self._select_stage = "PLAYER"
+        self._selected_player_slug = None
+        self._selected_cpu_slug = None
+        self._update_character_select_ui()
+
+    def _render_character_list(self) -> None:
+        try:
+            self._select_list.clear_widgets()
+        except Exception:
+            return
+
+        slugs = list(ROSTER.keys())
+        def key(s: str) -> str:
+            try:
+                return str(ROSTER.get(s, {}).get("name", s))
+            except Exception:
+                return str(s)
+        slugs = sorted(slugs, key=key)
+
+        self._select_buttons: dict[str, BorderedButton] = {}
+        for slug in slugs:
+            prof = dict(ROSTER.get(slug, {}) or {})
+            nm = str(prof.get("name", slug))
+            tline = self._profile_type_line(prof)
+            label = f"[b]{nm}[/b]\n[size=13sp]{tline}[/size]"
+            btn = BorderedButton(
+                text=label,
+                markup=True,
+                size_hint_y=None,
+                height=dp(56),
+                background_normal="",
+                background_color=COLOR_BTN_BASE,
+            )
+            btn.border_color = list(COLOR_CARD_SELECTED)
+            btn.border_width = float(dp(2))
+            btn.show_border = False
+            btn.wrestler_slug = str(slug)
+            btn.bind(on_release=self._on_select_wrestler)
+            self._select_buttons[str(slug)] = btn
+            self._select_list.add_widget(btn)
+
+    def _update_character_select_ui(self) -> None:
+        stage = str(getattr(self, "_select_stage", "PLAYER"))
+        self._select_title.text = "[b]SELECT PLAYER WRESTLER[/b]" if stage == "PLAYER" else "[b]SELECT CPU WRESTLER[/b]"
+
+        p_slug = getattr(self, "_selected_player_slug", None)
+        c_slug = getattr(self, "_selected_cpu_slug", None)
+        p_name = str(ROSTER.get(p_slug, {}).get("name", "(none)")) if p_slug else "(none)"
+        c_name = str(ROSTER.get(c_slug, {}).get("name", "(none)")) if c_slug else "(none)"
+        self._select_status.text = f"Player: {p_name}   |   CPU: {c_name}"
+
+        can_start = bool(p_slug) and bool(c_slug)
+        self._select_start_btn.disabled = not bool(can_start)
+        self._select_start_btn.background_color = get_color_from_hex(COLOR_HEX_PLAY_ENABLED if can_start else COLOR_HEX_PLAY_DISABLED)
+
+        # Highlight selected
+        for slug, btn in (getattr(self, "_select_buttons", {}) or {}).items():
+            show = False
+            if p_slug and slug == p_slug:
+                show = True
+                btn.border_color = list(COLOR_HP_PLAYER)
+            elif c_slug and slug == c_slug:
+                show = True
+                btn.border_color = list(COLOR_HP_CPU)
+            else:
+                btn.border_color = list(COLOR_CARD_SELECTED)
+            btn.show_border = bool(show)
+
+        # Bio box shows last-chosen or (if none) the default player.
+        bio_slug = None
+        if stage == "PLAYER":
+            bio_slug = p_slug or DEFAULT_PLAYER_PROFILE
+        else:
+            bio_slug = c_slug or DEFAULT_CPU_PROFILE
+        if bio_slug:
+            self._select_bio.text = self._profile_bio_markup(str(bio_slug))
+
+    def _on_select_wrestler(self, instance) -> None:
+        slug = str(getattr(instance, "wrestler_slug", "") or "")
+        if not slug:
+            return
+
+        stage = str(getattr(self, "_select_stage", "PLAYER"))
+        if stage == "PLAYER":
+            self._selected_player_slug = slug
+            self._select_stage = "CPU"
+        else:
+            self._selected_cpu_slug = slug
+
+        self._update_character_select_ui()
+
+    def _on_select_random(self, _inst=None) -> None:
+        try:
+            slugs = list(ROSTER.keys())
+        except Exception:
+            slugs = []
+        if not slugs:
+            return
+        pick = random.choice(slugs)
+        stage = str(getattr(self, "_select_stage", "PLAYER"))
+        if stage == "PLAYER":
+            self._selected_player_slug = str(pick)
+            self._select_stage = "CPU"
+        else:
+            self._selected_cpu_slug = str(pick)
+        self._update_character_select_ui()
+
+    def _on_select_start(self, _inst=None) -> None:
+        p_slug = getattr(self, "_selected_player_slug", None) or DEFAULT_PLAYER_PROFILE
+        c_slug = getattr(self, "_selected_cpu_slug", None) or DEFAULT_CPU_PROFILE
+        self._start_new_match_from_roster(str(p_slug), str(c_slug))
+        self._set_character_select_visible(False)
+
+    def _start_new_match_from_roster(self, player_slug: str, cpu_slug: str) -> None:
+        # Create fresh wrestler instances
+        p_prof = dict(ROSTER.get(str(player_slug), {}) or {})
+        c_prof = dict(ROSTER.get(str(cpu_slug), {}) or {})
+        self.player = Wrestler("YOU", True, profile=p_prof)
+        self.cpu = Wrestler("CPU", False, profile=c_prof)
+
+        # Buffs
+        self.player.lockup_edge_ready = False
+        self.cpu.lockup_edge_ready = False
+
+        # Reset match state
+        self.game_over = False
+        self._last_cpu_mode = None
+        self.turn = "player"
+        self._escape_mode = None
+        self.selected_cards = set()
+        self.selected_move = None
+        self._menu_stage = "CATEGORIES"
+        self._selected_category = None
+        self._card_tap_hint_shown = False
+        self._log_lines = []
+        self._match_started_at = datetime.now()
+        self._limb_blink_on = True
+        self.momentum = 0
+
+        # UI refresh
+        try:
+            self._update_hud()
+        except Exception:
+            pass
+        try:
+            self._render_hand()
+        except Exception:
+            pass
+        try:
+            self._render_moves_ui()
+        except Exception:
+            pass
+        try:
+            self._update_control_bar()
+        except Exception:
+            pass
+
+        # Kick off the match
+        self._start_turn("player")
 
     def _flash_clash(self, *, outcome: str, damage: int = 0) -> None:
         """outcome: 'player' | 'cpu' | 'neutral'"""
@@ -869,6 +1262,15 @@ class WrestleApp(App):
     def _start_turn(self, who):
         if self.game_over: return
 
+        # Tick down turn-based buffs.
+        for w in (self.player, self.cpu):
+            try:
+                t = int(getattr(w, "fired_up_turns_remaining", 0) or 0)
+                if t > 0:
+                    w.fired_up_turns_remaining = max(0, t - 1)
+            except Exception:
+                pass
+
         # Reset per-beat UX hints.
         self._card_tap_hint_shown = False
 
@@ -883,6 +1285,19 @@ class WrestleApp(App):
 
         # Phase 2: player always initiates the clash; CPU responds instantly.
         self.turn = "player"
+
+        # CPU may auto-trigger FIRE UP if momentum favors them.
+        try:
+            mom = int(getattr(self, "momentum", 0) or 0)
+            cpu_adv = max(0, -int(mom))
+            cpu_fired = int(getattr(self.cpu, "fired_up_turns_remaining", 0) or 0) > 0
+            if (not cpu_fired) and cpu_adv > 0 and self._escape_mode is None:
+                chance = float(TUNING_CPU_FIRE_UP_CHANCE_PER_MOM) * float(min(int(MOMENTUM_MAX_ABS), int(cpu_adv)))
+                chance = max(0.0, min(0.50, float(chance)))
+                if random.random() < chance:
+                    self._activate_fire_up(self.cpu)
+        except Exception:
+            pass
         
         self.player.draw_to_full()
         self.cpu.draw_to_full()
@@ -918,6 +1333,7 @@ class WrestleApp(App):
             self._log_lines.append(str(text))
         except Exception:
             pass
+
         lbl = Label(
             text=f"> {text}",
             markup=True,
@@ -981,6 +1397,67 @@ class WrestleApp(App):
             self._log(f"Log exported to: {out_path}")
         except Exception:
             self._log("Log export failed.")
+
+    def _show_rules(self, _inst=None) -> None:
+        try:
+            body = BoxLayout(orientation="vertical", spacing=dp(8), padding=[dp(12), dp(10), dp(12), dp(10)])
+
+            rules = (
+                "[b]Core Card Play[/b]\n"
+                "- Play 1 card, or 2 cards if they match [b]value[/b] (doubles) or match [b]color[/b] (same-color).\n"
+                "- Same-color 2-card play (non-gray): [b]+2[/b] to the higher card (cap 10).\n"
+                "- Move-type bonus: [b]+1[/b] if any chosen card matches the move type. [b]Yellow[/b] counts as any type.\n\n"
+                "[b]Rest / Defensive[/b]\n"
+                "- [b]Rest[/b]: no cards needed; press PLAY.\n"
+                "- If you Rest and get hit, your Rest recovery is interrupted.\n"
+                "- When hit while Resting: [b]25%[/b] chance the hit becomes a [b]CRITICAL[/b] (150% damage).\n"
+                "- [b]Defensive[/b]: discard 0–2 cards (value ≤ 5). If you discard doubles, your block gets [b]+5[/b].\n\n"
+                "[b]Groggy[/b]\n"
+                "- While GROGGY, only Groggy Recovery is allowed. Scoring caps card value at 7.\n\n"
+                "[b]Momentum Gates[/b]\n"
+                "- Moves with asterisks need that much momentum advantage to use.\n\n"
+                "[b]Fire Up![/b]\n"
+                "- If you have momentum advantage, you can FIRE UP to reset momentum and gain a short buff.\n"
+                "- While FIRED UP: +2 to each played card, you can't botch, and you win clash ties.\n\n"
+                "[b]Limb Penalties (under 30%)[/b]\n"
+                "- [b]HEAD[/b]: concussed; your effective hand size becomes 4.\n"
+                "- [b]BODY[/b]: winded; passive grit regen is halved.\n"
+                "- [b]LEGS[/b]: hobbled; you can't use Running/Aerial style moves.\n"
+                "- HUD limb values blink red when a penalty is active."
+            )
+
+            scroll = ScrollView(do_scroll_x=False)
+            lbl = Label(
+                text=rules,
+                markup=True,
+                halign="left",
+                valign="top",
+                color=COLOR_TEXT_SOFT,
+                size_hint_y=None,
+            )
+
+            def _refresh(*_a) -> None:
+                pad = 16
+                w = max(120, int(scroll.width) - pad)
+                lbl.text_size = (w, None)
+                lbl.texture_update()
+                lbl.height = max(dp(220), int(lbl.texture_size[1]) + dp(6))
+
+            lbl.bind(width=_refresh)
+            scroll.bind(width=lambda *_a: _refresh())
+            _refresh()
+            scroll.add_widget(lbl)
+
+            close_btn = Button(text="CLOSE", background_normal="", background_color=COLOR_BTN_BASE, size_hint_y=None, height=dp(46))
+            body.add_widget(scroll)
+            body.add_widget(close_btn)
+
+            pop = Popup(title="Rules", content=body, size_hint=(0.92, 0.72), auto_dismiss=True)
+            close_btn.bind(on_release=lambda *_a: pop.dismiss())
+            pop.open()
+        except Exception:
+            # Never crash the match over help UI.
+            return
 
     def _log_separator(self) -> None:
         self._log(LOG_EXCHANGE_SEPARATOR)
@@ -1121,7 +1598,17 @@ class WrestleApp(App):
             disp = f"{disp}{'*' * req}"
         return disp
 
-    def _move_is_legal(self, move_name: str, user: Wrestler, target: Wrestler, *, ignore_momentum_gate: bool = False) -> bool:
+    def _move_is_legal(
+        self,
+        move_name: str,
+        user: Wrestler,
+        target: Wrestler,
+        *,
+        ignore_momentum_gate: bool = False,
+        ignore_weight_gate: bool = False,
+    ) -> bool:
+        if str(move_name) not in MOVES:
+            return False
         mv = MOVES[move_name]
         ru = str(mv.get("req_user_state", "ANY"))
         rt = str(mv.get("req_target_state", "ANY"))
@@ -1142,6 +1629,20 @@ class WrestleApp(App):
             mtype = str(mv.get("type", "Setup"))
             if mtype == "Aerial" or ru in {"RUNNING", "TOP_ROPE"}:
                 return False
+
+        # --- 0c) Weight physics (lift gating) ---
+        if not bool(ignore_weight_gate):
+            try:
+                if bool(mv.get("is_lift", False)):
+                    weights = {"CRUISER": 1, "HEAVY": 2, "SUPER HEAVY": 3, "SUPERHEAVY": 3}
+                    u_wc = str(getattr(user, "weight_class", "Heavy") or "Heavy").upper().strip()
+                    t_wc = str(getattr(target, "weight_class", "Heavy") or "Heavy").upper().strip()
+                    u_wt = int(weights.get(u_wc, 2))
+                    t_wt = int(weights.get(t_wc, 2))
+                    if u_wt < t_wt and float(target.hp_pct()) > 0.50:
+                        return False
+            except Exception:
+                pass
 
         # Taunt: allow while you have offensive control in a grapple.
         try:
@@ -1254,11 +1755,24 @@ class WrestleApp(App):
             return True
         return move_name in set(wrestler.moveset)
 
-    def _available_moves(self, user: Wrestler, target: Wrestler, *, ignore_momentum_gate: bool = False) -> list[str]:
+    def _available_moves(
+        self,
+        user: Wrestler,
+        target: Wrestler,
+        *,
+        ignore_momentum_gate: bool = False,
+        ignore_weight_gate: bool = False,
+    ) -> list[str]:
         names = [
             n
             for n in MOVES.keys()
-            if self._move_is_legal(n, user, target, ignore_momentum_gate=ignore_momentum_gate)
+            if self._move_is_legal(
+                n,
+                user,
+                target,
+                ignore_momentum_gate=ignore_momentum_gate,
+                ignore_weight_gate=ignore_weight_gate,
+            )
             and self._passes_moveset(user, n)
         ]
 
@@ -1303,7 +1817,12 @@ class WrestleApp(App):
             return min(7, raw) if clamp7 else raw
 
         doubles = bool(len(cards) == 2 and int(cards[0].value) == int(cards[1].value))
-        same_color = bool(len(cards) == 2 and (not doubles) and str(cards[0].color) == str(cards[1].color))
+        same_color = bool(
+            len(cards) == 2
+            and (not doubles)
+            and str(cards[0].color) == str(cards[1].color)
+            and str(cards[0].color) != "GRAY"
+        )
 
         if doubles:
             base = int(v(cards[0])) + 5
@@ -1342,7 +1861,7 @@ class WrestleApp(App):
 
         if len(cards) == 2:
             same_val = (int(cards[0].value) == int(cards[1].value))
-            same_col = (str(cards[0].color) == str(cards[1].color))
+            same_col = (str(cards[0].color) == str(cards[1].color)) and (str(cards[0].color) != "GRAY")
             if not (same_val or same_col):
                 return []
         return cards
@@ -1402,8 +1921,17 @@ class WrestleApp(App):
         p_card_value_sum = 0 if p_ignore_cards else sum(int(c.value) for c in (p_cards or []))
         c_card_value_sum = 0 if c_ignore_cards else sum(int(c.value) for c in (c_cards or []))
 
-        p_bonus = int(self.player.next_card_bonus)
-        c_bonus = int(self.cpu.next_card_bonus)
+        p_fired = int(getattr(self.player, "fired_up_turns_remaining", 0) or 0) > 0
+        c_fired = int(getattr(self.cpu, "fired_up_turns_remaining", 0) or 0) > 0
+        p_fired_card_bonus = int(TUNING_FIRED_UP_CARD_BONUS_PER_CARD) if p_fired else 0
+        c_fired_card_bonus = int(TUNING_FIRED_UP_CARD_BONUS_PER_CARD) if c_fired else 0
+        if p_fired_card_bonus and (not p_ignore_cards):
+            p_card_value_sum += int(p_fired_card_bonus) * int(len(p_cards or []))
+        if c_fired_card_bonus and (not c_ignore_cards):
+            c_card_value_sum += int(c_fired_card_bonus) * int(len(c_cards or []))
+
+        p_bonus = int(self.player.next_card_bonus) + int(p_fired_card_bonus) * int(len(p_cards or []))
+        c_bonus = int(self.cpu.next_card_bonus) + int(c_fired_card_bonus) * int(len(c_cards or []))
 
         p_score = -1 if p_move == MOVE_DEFENSIVE else self._calc_clash_score(p_move, p_cards, card_bonus=p_bonus)
         c_score = -1 if c_move == MOVE_DEFENSIVE else self._calc_clash_score(c_move, c_cards, card_bonus=c_bonus)
@@ -1458,16 +1986,39 @@ class WrestleApp(App):
         if bool(REVEAL_SCORE_BREAKDOWN):
             def _breakdown(move_name: str, cards: list, card_bonus: int, chain_add: int, mom_add: int) -> str:
                 if move_name == MOVE_DEFENSIVE:
-                    return "DEF"
+                    pool = sum(int(c.value) for c in (cards or []))
+                    if cards and len(cards) == 2 and int(cards[0].value) == int(cards[1].value):
+                        pool += 5
+                    return f"DEF {pool}"
                 if not cards:
                     return f"0+chain{int(chain_add)}+mom{int(mom_add)}"
                 move_type = str(MOVES.get(move_name, {}).get("type", "Setup"))
                 clash_mod = int(MOVES.get(move_name, {}).get("clash_mod", 0))
                 doubles = bool(len(cards) == 2 and int(cards[0].value) == int(cards[1].value))
-                val = int(cards[0].value) if doubles else sum(int(c.value) for c in cards)
-                dbl = 5 if doubles else 0
-                col = max(int(cards[0].color_bonus(move_type)), int(cards[1].color_bonus(move_type))) if doubles else sum(int(c.color_bonus(move_type)) for c in cards)
-                base = int(val) + int(dbl) + int(col) + int(card_bonus) + int(clash_mod)
+                same_color = bool(
+                    len(cards) == 2
+                    and (not doubles)
+                    and str(cards[0].color) == str(cards[1].color)
+                    and str(cards[0].color) != "GRAY"
+                )
+
+                if doubles:
+                    val = int(cards[0].value)
+                    dbl = 5
+                    col = max(int(cards[0].color_bonus(move_type)), int(cards[1].color_bonus(move_type)))
+                    base = (int(val) + int(val)) + int(dbl) + int(col) + int(card_bonus) + int(clash_mod)
+                elif same_color:
+                    hi = max(int(cards[0].value), int(cards[1].value))
+                    val = int(hi)
+                    dbl = 0
+                    col = max(int(cards[0].color_bonus(move_type)), int(cards[1].color_bonus(move_type)))
+                    base = min(10, int(val) + 2) + int(col) + int(card_bonus) + int(clash_mod)
+                else:
+                    val = sum(int(c.value) for c in cards)
+                    dbl = 0
+                    col = sum(int(c.color_bonus(move_type)) for c in cards)
+                    base = int(val) + int(dbl) + int(col) + int(card_bonus) + int(clash_mod)
+
                 return f"{val}+dbl{dbl}+col{col}+bon{int(card_bonus)}+mod{clash_mod}+chain{int(chain_add)}+mom{int(mom_add)}={int(base)+int(chain_add)+int(mom_add)}"
 
             self._log(
@@ -1531,80 +2082,57 @@ class WrestleApp(App):
             self._flash_clash(outcome="neutral", damage=0)
         elif (p_move != MOVE_DEFENSIVE) and (c_move != MOVE_DEFENSIVE) and (p_score == c_score):
             # Botch edge case: in a tie, a botch can break the stalemate.
-            def is_attack(move_name: str) -> bool:
-                t = str(MOVES.get(move_name, {}).get("type", "Setup"))
-                return t not in {"Setup", "Defensive"}
 
-            def botch_roll(w: Wrestler, move_name: str) -> bool:
-                if not is_attack(move_name):
-                    return False
-                missing = max(0.0, float(MAX_HEALTH) - float(getattr(w, "hp", 0)))
-                divisor = max(1.0, float(TUNING_BOTCH_DIVISOR))
-                chance = max(0.0, min(100.0, missing / divisor))
-                return float(random.uniform(0.0, 100.0)) < chance
-
-            p_botch = botch_roll(self.player, p_move)
-            c_botch = botch_roll(self.cpu, c_move)
-
-            # If any botch is involved in breaking the tie, don't re-roll botch later.
-            skip_winner_botch_check = bool(p_botch or c_botch)
-
-            if p_botch and (not c_botch):
-                self._log(f"BOTCH! {self._fmt_name(self.player)} stumbles due to injury!")
-                winner, loser = self.cpu, self.player
-                w_move, w_score = c_move, c_score
-            elif c_botch and (not p_botch):
-                self._log(f"BOTCH! {self._fmt_name(self.cpu)} stumbles due to injury!")
-                winner, loser = self.player, self.cpu
-                w_move, w_score = p_move, p_score
-            elif p_botch and c_botch:
-                # Double botch: healthier wrestler still lands their move.
-                self._log("DOUBLE BOTCH! Both stumble — the healthier fighter capitalizes!")
+            # FIRE UP!: if exactly one side is fired up, they win ties outright.
+            if bool(p_fired) != bool(c_fired):
+                winner, loser = (self.player, self.cpu) if p_fired else (self.cpu, self.player)
+                w_move, w_score = (p_move, p_score) if winner is self.player else (c_move, c_score)
                 force_winner_execute = True
-                if int(self.player.hp) > int(self.cpu.hp):
-                    winner, loser = self.player, self.cpu
-                    w_move, w_score = p_move, p_score
-                elif int(self.cpu.hp) > int(self.player.hp):
+                skip_winner_botch_check = True
+                self._log(f"FIRE UP! {self._fmt_name(winner)} wins the tie!")
+            else:
+                def is_attack(move_name: str) -> bool:
+                    t = str(MOVES.get(move_name, {}).get("type", "Setup"))
+                    return t not in {"Setup", "Defensive"}
+
+                def botch_roll(w: Wrestler, move_name: str) -> bool:
+                    # FIRE UP!: cannot botch.
+                    try:
+                        if int(getattr(w, "fired_up_turns_remaining", 0) or 0) > 0:
+                            return False
+                    except Exception:
+                        pass
+                    if not is_attack(move_name):
+                        return False
+                    missing = max(0.0, float(MAX_HEALTH) - float(getattr(w, "hp", 0)))
+                    divisor = max(1.0, float(TUNING_BOTCH_DIVISOR))
+                    chance = max(0.0, min(100.0, missing / divisor))
+                    return float(random.uniform(0.0, 100.0)) < chance
+
+                p_botch = botch_roll(self.player, p_move)
+                c_botch = botch_roll(self.cpu, c_move)
+
+                # If any botch is involved in breaking the tie, don't re-roll botch later.
+                skip_winner_botch_check = bool(p_botch or c_botch)
+
+                if p_botch and (not c_botch):
+                    self._log(f"BOTCH! {self._fmt_name(self.player)} stumbles due to injury!")
                     winner, loser = self.cpu, self.player
                     w_move, w_score = c_move, c_score
-                else:
-                    if random.random() < 0.5:
+                elif c_botch and (not p_botch):
+                    self._log(f"BOTCH! {self._fmt_name(self.cpu)} stumbles due to injury!")
+                    winner, loser = self.player, self.cpu
+                    w_move, w_score = p_move, p_score
+                elif p_botch and c_botch:
+                    # Double botch: healthier wrestler still lands their move.
+                    self._log("DOUBLE BOTCH! Both stumble — the healthier fighter capitalizes!")
+                    force_winner_execute = True
+                    if int(self.player.hp) > int(self.cpu.hp):
                         winner, loser = self.player, self.cpu
                         w_move, w_score = p_move, p_score
-                    else:
+                    elif int(self.cpu.hp) > int(self.player.hp):
                         winner, loser = self.cpu, self.player
                         w_move, w_score = c_move, c_score
-            else:
-                # No botch: break ties by Strength (remaining deck + hand).
-                try:
-                    p_str = int(self.player.strength_current())
-                except Exception:
-                    p_str = 0
-                try:
-                    c_str = int(self.cpu.strength_current())
-                except Exception:
-                    c_str = 0
-
-                if p_str > c_str:
-                    winner, loser = self.player, self.cpu
-                    w_move, w_score = p_move, p_score
-                    force_winner_execute = True
-                    self._log(f"TIE BREAK! {self._fmt_name(self.player)} muscles through on Strength.")
-                elif c_str > p_str:
-                    winner, loser = self.cpu, self.player
-                    w_move, w_score = c_move, c_score
-                    force_winner_execute = True
-                    self._log(f"TIE BREAK! {self._fmt_name(self.cpu)} muscles through on Strength.")
-                else:
-                    # True tie: usually coin toss, occasionally double-down.
-                    if random.random() < float(TUNING_DOUBLE_DOWN_ON_TRUE_TIE_CHANCE):
-                        self._log("DOUBLE DOWN! Both crash into the mat — 5 damage each. Both are GROUNDED.")
-                        self.player.take_damage(5)
-                        self.cpu.take_damage(5)
-                        self.player.clear_grapple()
-                        self.cpu.clear_grapple()
-                        self.player.set_state(WrestlerState.GROUNDED)
-                        self.cpu.set_state(WrestlerState.GROUNDED)
                     else:
                         if random.random() < 0.5:
                             winner, loser = self.player, self.cpu
@@ -1612,8 +2140,46 @@ class WrestleApp(App):
                         else:
                             winner, loser = self.cpu, self.player
                             w_move, w_score = c_move, c_score
+                else:
+                    # No botch: break ties by Strength (remaining deck + hand).
+                    try:
+                        p_str = int(self.player.strength_current())
+                    except Exception:
+                        p_str = 0
+                    try:
+                        c_str = int(self.cpu.strength_current())
+                    except Exception:
+                        c_str = 0
+
+                    if p_str > c_str:
+                        winner, loser = self.player, self.cpu
+                        w_move, w_score = p_move, p_score
                         force_winner_execute = True
-                        self._log("TIE! A split-second edge decides it.")
+                        self._log(f"TIE BREAK! {self._fmt_name(self.player)} muscles through on Strength.")
+                    elif c_str > p_str:
+                        winner, loser = self.cpu, self.player
+                        w_move, w_score = c_move, c_score
+                        force_winner_execute = True
+                        self._log(f"TIE BREAK! {self._fmt_name(self.cpu)} muscles through on Strength.")
+                    else:
+                        # True tie: usually coin toss, occasionally double-down.
+                        if random.random() < float(TUNING_DOUBLE_DOWN_ON_TRUE_TIE_CHANCE):
+                            self._log("DOUBLE DOWN! Both crash into the mat — 5 damage each. Both are GROUNDED.")
+                            self.player.take_damage(5)
+                            self.cpu.take_damage(5)
+                            self.player.clear_grapple()
+                            self.cpu.clear_grapple()
+                            self.player.set_state(WrestlerState.GROUNDED)
+                            self.cpu.set_state(WrestlerState.GROUNDED)
+                        else:
+                            if random.random() < 0.5:
+                                winner, loser = self.player, self.cpu
+                                w_move, w_score = p_move, p_score
+                            else:
+                                winner, loser = self.cpu, self.player
+                                w_move, w_score = c_move, c_score
+                            force_winner_execute = True
+                            self._log("TIE! A split-second edge decides it.")
         elif p_score > c_score:
             winner, loser = self.player, self.cpu
             w_move, w_score = p_move, p_score
@@ -1633,7 +2199,13 @@ class WrestleApp(App):
             def score_txt(move_name: str, score: int, cards: list) -> str:
                 if move_name == MOVE_DEFENSIVE:
                     pool = sum(int(c.value) for c in (cards or []))
+                    if cards and len(cards) == 2 and int(cards[0].value) == int(cards[1].value):
+                        pool += 5
                     return f"DEF {pool}"
+                if move_name == MOVE_REST:
+                    return "0"
+                if int(score) < 0:
+                    return "0"
                 return str(int(score))
 
             w_txt = score_txt(str(winner_move), winner_score, winner_cards)
@@ -1663,26 +2235,42 @@ class WrestleApp(App):
                     f"{self._fmt_move(str(winner_move))} ({w_txt}) ({w_cards_txt})!{extra}"
                 )
 
-            self._last_clash_winner = winner
-            # Base flash on clash result; damage (if any) will override in _execute_move.
-            self._flash_clash(outcome=("player" if winner is self.player else "cpu"), damage=0)
+            # Defer VFX until after botch check so botches don't flash winner colors.
 
         # --- Botch check happens before criticals (so a botch can't "critical") ---
+        rest_interrupted_player = False
+        rest_interrupted_cpu = False
         caught_napping_player = False
         caught_napping_cpu = False
         critical_damage_override: int | None = None
 
         if (not simultaneous) and (winner is not None) and (w_move is not None):
             if (not skip_winner_botch_check) and (not force_winner_execute):
-                w_type = str(MOVES.get(str(w_move), {}).get("type", "Setup"))
-                is_attack = (w_type not in {"Setup", "Defensive"})
-                if is_attack:
-                    missing = max(0.0, float(MAX_HEALTH) - float(getattr(winner, "hp", 0)))
-                    divisor = max(1.0, float(TUNING_BOTCH_DIVISOR))
-                    botch_chance = max(0.0, min(100.0, missing / divisor))
-                    if float(random.uniform(0.0, 100.0)) < botch_chance:
-                        self._log(f"BOTCH! {self._fmt_name(winner)} stumbles due to injury!")
-                        winner = None
+                fired_no_botch = False
+                try:
+                    fired_no_botch = int(getattr(winner, "fired_up_turns_remaining", 0) or 0) > 0
+                except Exception:
+                    fired_no_botch = False
+
+                if fired_no_botch:
+                    # FIRE UP!: cannot botch.
+                    skip_winner_botch_check = True
+                else:
+                    w_type = str(MOVES.get(str(w_move), {}).get("type", "Setup"))
+                    is_attack = (w_type in {"Strike", "Grapple", "Aerial"})
+                    if is_attack:
+                        missing = max(0.0, float(MAX_HEALTH) - float(getattr(winner, "hp", 0)))
+                        divisor = max(1.0, float(TUNING_BOTCH_DIVISOR))
+                        botch_chance = max(0.0, min(100.0, missing / divisor))
+                        if float(random.uniform(0.0, 100.0)) < botch_chance:
+                            self._log(f"BOTCH! {self._fmt_name(winner)} stumbles due to injury!")
+                            winner = None
+
+        # Apply clash flash only if a move will actually execute.
+        self._last_clash_winner = winner
+        if (not simultaneous) and (winner is not None) and (loser is not None):
+            # Base flash on clash result; damage (if any) will override in _execute_move.
+            self._flash_clash(outcome=("player" if winner is self.player else "cpu"), damage=0)
 
         # --- "Caught Napping" criticals (Rest punish) ---
         if (not simultaneous) and (winner is not None) and (loser is not None) and (w_move is not None):
@@ -1690,13 +2278,18 @@ class WrestleApp(App):
             w_type = str(MOVES.get(str(w_move), {}).get("type", "Setup"))
             is_attack = w_type in {"Strike", "Grapple", "Aerial", "Pin", "Submission"}
             if (str(loser_move) == MOVE_REST) and is_attack:
-                caught_napping_player = bool(loser is self.player)
-                caught_napping_cpu = bool(loser is self.cpu)
+                rest_interrupted_player = bool(loser is self.player)
+                rest_interrupted_cpu = bool(loser is self.cpu)
 
-                raw = int(MOVES.get(str(w_move), {}).get("damage", 0))
-                if raw > 0:
-                    critical_damage_override = int(round(float(raw) * 1.5))
-                self._log(f"CRITICAL! {self._fmt_name(winner)} catches {self._fmt_name(loser)} resting!")
+                # 25% chance to become a critical when hit while resting.
+                if float(random.random()) < float(TUNING_CAUGHT_RESTING_CRIT_CHANCE):
+                    caught_napping_player = bool(loser is self.player)
+                    caught_napping_cpu = bool(loser is self.cpu)
+
+                    raw = int(MOVES.get(str(w_move), {}).get("damage", 0))
+                    if raw > 0:
+                        critical_damage_override = int(round(float(raw) * 1.5))
+                    self._log(f"CRITICAL! {self._fmt_name(winner)} catches {self._fmt_name(loser)} resting!")
 
         # Passive regen text: show it early in the log stack.
         def _apply_passive_regen(w: Wrestler, total_spent: int, *, blocked: bool) -> None:
@@ -1718,20 +2311,20 @@ class WrestleApp(App):
             if gained > 0:
                 self._log(f"{self._fmt_name(w)}: Passive Regen (+{gained} Grit).")
 
-        _apply_passive_regen(self.player, p_total_spent, blocked=bool(caught_napping_player and p_move == MOVE_REST))
-        _apply_passive_regen(self.cpu, c_total_spent, blocked=bool(caught_napping_cpu and c_move == MOVE_REST))
+        _apply_passive_regen(self.player, p_total_spent, blocked=bool(rest_interrupted_player and p_move == MOVE_REST))
+        _apply_passive_regen(self.cpu, c_total_spent, blocked=bool(rest_interrupted_cpu and c_move == MOVE_REST))
 
         # Spend grit + apply card-driven economy + discard + redraw (both sides pay their attempt).
         self.player.spend_grit(p_move_cost)
-        # If the player got caught resting, cancel all Rest regen (including card-regen).
-        if not (caught_napping_player and p_move == MOVE_REST):
+        # If the player got hit while Resting, cancel all Rest regen (including card-regen).
+        if not (rest_interrupted_player and p_move == MOVE_REST):
             self.player.apply_grit_from_cards(p_cards, ignore_cost=p_ignore_cards)
         self.player.discard_cards(p_cards)
         self.player.draw_to_full()
 
         self.cpu.spend_grit(c_move_cost)
-        # If the CPU got caught resting, cancel all Rest regen (including card-regen).
-        if not (caught_napping_cpu and c_move == MOVE_REST):
+        # If the CPU got hit while Resting, cancel all Rest regen (including card-regen).
+        if not (rest_interrupted_cpu and c_move == MOVE_REST):
             self.cpu.apply_grit_from_cards(c_cards, ignore_cost=c_ignore_cards)
         self.cpu.discard_cards(c_cards)
         self.cpu.draw_to_full()
@@ -1779,6 +2372,14 @@ class WrestleApp(App):
             if (p_move == MOVE_DEFENSIVE and winner is self.cpu) or (c_move == MOVE_DEFENSIVE and winner is self.player):
                 defender_cards = p_cards if p_move == MOVE_DEFENSIVE else c_cards
                 pool = sum(int(c.value) for c in (defender_cards or []))
+                if defender_cards and len(defender_cards) == 2 and int(defender_cards[0].value) == int(defender_cards[1].value):
+                    pool += 5
+                try:
+                    defender = self.player if p_move == MOVE_DEFENSIVE else self.cpu
+                    if int(getattr(defender, "fired_up_turns_remaining", 0) or 0) > 0:
+                        pool += int(TUNING_FIRED_UP_CARD_BONUS_PER_CARD) * int(len(defender_cards or []))
+                except Exception:
+                    pass
                 opp_score = int(w_score or 0)
                 raw_dmg = int(MOVES.get(w_move, {}).get("damage", 0))
 
@@ -1894,6 +2495,13 @@ class WrestleApp(App):
 
     def _begin_escape(self, *, attacker: Wrestler, defender: Wrestler, kind: str, move_name: str | None = None) -> None:
         threshold = self._escape_threshold(defender.hp_pct())
+        try:
+            if str(kind).upper() == "PINFALL":
+                mult = float(getattr(defender, "pin_escape_threshold_mult", 1.0) or 1.0)
+                mult = max(0.0, min(1.0, mult))
+                threshold = int(math.ceil(float(threshold) * float(mult)))
+        except Exception:
+            pass
         self._escape_mode = {
             "kind": str(kind),
             "threshold": int(threshold),
@@ -2025,13 +2633,13 @@ class WrestleApp(App):
 
         if kind.upper() == "PINFALL":
             if count_no == 1:
-                self._log(f"ONE! Escape attempt: discard {gained} (total {total}/{threshold})")
+                self._log(f"ONE! Escape attempt: discard {gained}.")
             elif count_no == 2:
-                self._log(f"TWO! Escape attempt: discard {gained} (total {total}/{threshold})")
+                self._log(f"TWO! Escape attempt: discard {gained}.")
             else:
-                self._log(f"THREE... Escape attempt: discard {gained} (total {total}/{threshold})")
+                self._log(f"THREE... Escape attempt: discard {gained}.")
         else:
-            self._log(f"Escape discard: {gained} (total {total}/{threshold})")
+            self._log(f"Escape discard: {gained}.")
         self._render_hand()
         self._render_moves_ui()
         self._update_control_bar()
@@ -2080,6 +2688,15 @@ class WrestleApp(App):
             return
         attacker = self._escape_mode.get("attacker")
         defender = self._escape_mode.get("defender")
+        kind = str(self._escape_mode.get("kind", "ESCAPE"))
+
+        # Pin anti-spam: each successful kickout makes future pins easier to escape.
+        if success and isinstance(defender, Wrestler) and kind.upper() == "PINFALL":
+            try:
+                cur = float(getattr(defender, "pin_escape_threshold_mult", 1.0) or 1.0)
+                defender.pin_escape_threshold_mult = float(cur) * float(TUNING_PIN_ESCAPE_THRESHOLD_MULT_ON_SUCCESS)
+            except Exception:
+                pass
         if success and isinstance(attacker, Wrestler) and isinstance(defender, Wrestler):
             attacker.clear_grapple()
             defender.clear_grapple()
@@ -2475,6 +3092,11 @@ class WrestleApp(App):
         if not hand:
             return []
 
+        try:
+            fired_bonus = int(TUNING_FIRED_UP_CARD_BONUS_PER_CARD) if int(getattr(self.cpu, "fired_up_turns_remaining", 0) or 0) > 0 else 0
+        except Exception:
+            fired_bonus = 0
+
         # Finishers require doubles.
         is_finisher = bool(MOVES.get(move_name, {}).get("is_finisher"))
 
@@ -2495,7 +3117,7 @@ class WrestleApp(App):
                     continue
                 card_cost = 0 if ignore_card_cost else int(c.grit_cost())
                 if int(self.cpu.grit) >= int(move_cost) + int(card_cost):
-                    candidates.append({"cards": [c], "score": int(c.value)})
+                    candidates.append({"cards": [c], "score": int(c.value) + int(fired_bonus)})
 
         # Doubles
         by_val: dict[int, list] = {}
@@ -2511,7 +3133,7 @@ class WrestleApp(App):
                 card_cost = 0 if ignore_card_cost else sum(int(x.grit_cost()) for x in pair)
                 if int(self.cpu.grit) >= int(move_cost) + int(card_cost):
                     v = int(cs[0].value)
-                    candidates.append({"cards": pair, "score": int(v + v + 5)})
+                    candidates.append({"cards": pair, "score": int(v + v + 5) + int(fired_bonus) * 2})
 
         # Same-color pair: high card +2 (capped at 10). (Not allowed for finishers.)
         if not is_finisher:
@@ -2519,6 +3141,8 @@ class WrestleApp(App):
             for c in hand:
                 by_col.setdefault(str(c.color), []).append(c)
             for col, cs in by_col.items():
+                if str(col) == "GRAY":
+                    continue
                 if len(cs) < 2:
                     continue
                 # If there is a doubles pair in this color, it's already covered above.
@@ -2536,7 +3160,7 @@ class WrestleApp(App):
                 if int(self.cpu.grit) >= int(move_cost) + int(card_cost):
                     hi = max(int(a.value), int(b.value))
                     score = min(10, int(hi) + 2)
-                    candidates.append({"cards": pair, "score": int(score)})
+                    candidates.append({"cards": pair, "score": int(score) + int(fired_bonus) * 2})
 
         if not candidates:
             return []
@@ -2565,13 +3189,48 @@ class WrestleApp(App):
         mom = int(getattr(self, "momentum", 0))
         if mom <= 0:
             return
-        bonus = int(mom) * 2
-        self.momentum = 0
-        self.player.next_card_bonus = int(self.player.next_card_bonus) + int(bonus)
-        self._log(f"FIRE UP! You cash in momentum (+{bonus} to next card).")
+        if int(getattr(self.player, "fired_up_turns_remaining", 0) or 0) > 0:
+            return
+
+        self._activate_fire_up(self.player)
         self._update_hud()
         self._render_moves_ui()
         self._update_control_bar()
+
+    def _fire_up_duration_from_advantage(self, adv: int) -> int:
+        """Map momentum advantage magnitude to FIRE UP duration.
+
+        Player-facing mapping:
+        1-2 => 1 turn, 3-4 => 2 turns, 5 => 3 turns.
+        """
+        mag = max(0, min(int(MOMENTUM_MAX_ABS), abs(int(adv))))
+        if mag <= 0:
+            return 0
+        if mag <= 2:
+            return 1
+        if mag <= 4:
+            return 2
+        return 3
+
+    def _activate_fire_up(self, who: Wrestler) -> None:
+        if self.game_over:
+            return
+        if self._escape_mode is not None:
+            return
+
+        adv = int(self._momentum_advantage_for(who))
+        if adv <= 0:
+            return
+
+        dur = int(self._fire_up_duration_from_advantage(adv))
+        if dur <= 0:
+            return
+
+        who.fired_up_turns_remaining = int(dur)
+        self.momentum = 0
+        self._log(
+            f"FIRE UP! {self._fmt_name(who)} ignites ({dur} turns): +{int(TUNING_FIRED_UP_CARD_BONUS_PER_CARD)} to each card, no botches, wins ties."
+        )
     
     def _update_hud(self):
         def state_name(w: Wrestler) -> str:
@@ -2587,6 +3246,13 @@ class WrestleApp(App):
                 return ""
             return f" [FLOW {w.flow_turns_remaining}]"
 
+        def fired(w: Wrestler) -> str:
+            try:
+                t = int(getattr(w, "fired_up_turns_remaining", 0) or 0)
+            except Exception:
+                t = 0
+            return f" [FIRED UP {t}]" if t > 0 else ""
+
         def grog(w: Wrestler) -> str:
             if bool(getattr(w, "is_groggy", False)):
                 return " [GROGGY]"
@@ -2601,8 +3267,8 @@ class WrestleApp(App):
         p_role = role_name(self.player)
         c_role = role_name(self.cpu)
         self.state_label.text = (
-            f"[b]STATE:[/b] {p_state} ({p_role}){flow(self.player)}{grog(self.player)}{dazed(self.player)}"
-            f"  |  CPU: {c_state} ({c_role}){flow(self.cpu)}{grog(self.cpu)}{dazed(self.cpu)}"
+            f"[b]{p_state}[/b] ({p_role}){flow(self.player)}{fired(self.player)}{grog(self.player)}{dazed(self.player)}"
+            f"  |  CPU: {c_state} ({c_role}){flow(self.cpu)}{fired(self.cpu)}{grog(self.cpu)}{dazed(self.cpu)}"
         )
 
         # Always-visible per-wrestler state lines under names.
@@ -2630,7 +3296,8 @@ class WrestleApp(App):
 
         try:
             if hasattr(self, "fire_up_btn"):
-                self.fire_up_btn.disabled = int(mom) <= 0
+                already = int(getattr(self.player, "fired_up_turns_remaining", 0) or 0) > 0
+                self.fire_up_btn.disabled = (int(mom) <= 0) or bool(already)
         except Exception:
             pass
 
@@ -2656,14 +3323,55 @@ class WrestleApp(App):
         self.p_hype_bar.value = int(self.player.hype)
         self.c_hype_bar.value = int(self.cpu.hype)
 
-        # Strength + limbs
-        p_str = f"Str {self.player.strength_current()}/{self.player.strength_max()}"
-        c_str = f"Str {self.cpu.strength_current()}/{self.cpu.strength_max()}"
+        # Strength + hand size + limbs
+        try:
+            p_hand_max = int(self.player.check_limb_penalties().get("max_hand_size", 5))
+        except Exception:
+            p_hand_max = 5
+        try:
+            c_hand_max = int(self.cpu.check_limb_penalties().get("max_hand_size", 5))
+        except Exception:
+            c_hand_max = 5
+        p_hand = len(list(getattr(self.player, "hand", []) or []))
+        c_hand = len(list(getattr(self.cpu, "hand", []) or []))
+
+        p_str = f"Str {self.player.strength_current()}/{self.player.strength_max()}  Hand {p_hand}/{p_hand_max}"
+        c_str = f"Str {self.cpu.strength_current()}/{self.cpu.strength_max()}  Hand {c_hand}/{c_hand_max}"
         self.p_nums.text = p_str
         self.c_nums.text = c_str
 
-        self.p_limbs.text = f"H:{self.player.body_parts['HEAD']}  B:{self.player.body_parts['BODY']}  L:{self.player.body_parts['LEGS']}"
-        self.c_limbs.text = f"H:{self.cpu.body_parts['HEAD']}  B:{self.cpu.body_parts['BODY']}  L:{self.cpu.body_parts['LEGS']}"
+        def _limb_line(w: Wrestler) -> str:
+            try:
+                head = int(w.body_parts.get("HEAD", 100))
+                body = int(w.body_parts.get("BODY", 100))
+                legs = int(w.body_parts.get("LEGS", 100))
+            except Exception:
+                head, body, legs = 100, 100, 100
+
+            def seg(tag: str, v: int, *, blink: bool) -> str:
+                if blink:
+                    return f"[color={COLOR_HEX_HP_CRITICAL}]{tag}:{v}[/color]"
+                return f"{tag}:{v}"
+
+            blink_head = bool(head < 30 and self._limb_blink_on)
+            blink_body = bool(body < 30 and self._limb_blink_on)
+            blink_legs = bool(legs < 30 and self._limb_blink_on)
+
+            return f"{seg('H', head, blink=blink_head)}  {seg('B', body, blink=blink_body)}  {seg('L', legs, blink=blink_legs)}"
+
+        self.p_limbs.text = _limb_line(self.player)
+        self.c_limbs.text = _limb_line(self.cpu)
+
+    def _tick_limb_blink(self, _dt: float) -> None:
+        try:
+            self._limb_blink_on = not bool(getattr(self, "_limb_blink_on", True))
+        except Exception:
+            self._limb_blink_on = True
+        # Only affects HUD rendering; safe to no-op if UI not ready.
+        try:
+            self._update_hud()
+        except Exception:
+            return
 
     def _render_hand(self):
         self.hand_layout.clear_widgets()
@@ -2694,6 +3402,13 @@ class WrestleApp(App):
                 nb = int(getattr(self.player, "next_card_bonus", 0))
                 if nb > 0:
                     parts.append(f"+{nb} HYPE")
+            except Exception:
+                pass
+
+            # FIRE UP!: bonus to each played card while active.
+            try:
+                if int(getattr(self.player, "fired_up_turns_remaining", 0) or 0) > 0:
+                    parts.append(f"+{int(TUNING_FIRED_UP_CARD_BONUS_PER_CARD)} FIRE")
             except Exception:
                 pass
 
@@ -2732,13 +3447,15 @@ class WrestleApp(App):
             selected = (i in self.selected_cards)
 
             parts = pending_mod_parts(card)
-            if parts:
-                # Keep value first and truncate modifiers if space is tight.
-                mods_txt = " ".join(str(p) for p in parts)
-                text = f"{int(card.value)} {mods_txt}"
-            else:
-                text = str(card.value)
-            markup = False
+            mods_txt = " ".join(str(p) for p in (parts or []))
+            # Mobile: keep value always visible; show modifiers on a second line.
+            # (Manually truncate modifier line to avoid layout-dependent clipping.)
+            if len(mods_txt) > 16:
+                mods_txt = mods_txt[:13] + "..."
+            if not mods_txt:
+                mods_txt = " "
+            text = f"[b]{int(card.value)}[/b]\n[size=12sp]{mods_txt}[/size]"
+            markup = True
 
             btn = BorderedButton(
                 text=text,
@@ -2751,10 +3468,9 @@ class WrestleApp(App):
                 btn.auto_wrap = False
                 btn.halign = "center"
                 btn.valign = "middle"
-                btn.padding = [dp(4), dp(4)]
-                btn.shorten = True
-                btn.shorten_from = "right"
-                btn.max_lines = 1
+                btn.padding = [dp(2), dp(2)]
+                btn.shorten = False
+                btn.max_lines = 2
             except Exception:
                 pass
             btn.border_color = list(COLOR_CARD_SELECTED)
@@ -2819,9 +3535,9 @@ class WrestleApp(App):
 
     def _render_moves_ui(self) -> None:
         self.move_list_layout.clear_widgets()
-        # Default to 3 columns; certain stages (like ESCAPE) override.
+        # Default columns vary by stage; ESCAPE overrides to 1 below.
         try:
-            self.move_list_layout.cols = 3
+            self.move_list_layout.cols = 2 if self._menu_stage == "MOVES" else 3
         except Exception:
             pass
 
@@ -2856,7 +3572,9 @@ class WrestleApp(App):
             else:
                 instr = "CPU is escaping. Press CONTINUE between beats."
             lbl = Label(
-                text=f"ESCAPE!  Total: {info.get('total', 0)}/{info.get('threshold', 1)}   Plays left: {info.get('plays_left', 0)}\n{instr}",
+                text=(
+                    (f"ESCAPE!   Plays left: {info.get('plays_left', 0)}\n{instr}" if defender_is_player else f"ESCAPE!  Total: {info.get('total', 0)}/{info.get('threshold', 1)}   Plays left: {info.get('plays_left', 0)}\n{instr}")
+                ),
                 color=COLOR_TEXT_SOFT,
                 size_hint_y=None,
                 height=84,
@@ -2897,8 +3615,8 @@ class WrestleApp(App):
                 def pick(_inst=None) -> None:
                     self.selected_move = MOVE_GROGGY_RECOVERY
                     self.selected_cards.clear()
+                    self._set_menu_stage("MOVES", category="UTILITY")
                     self._render_hand()
-                    self._update_play_button()
 
                 btn = Button(
                     text="[b]GROGGY RECOVERY[/b]",
@@ -3085,8 +3803,8 @@ class WrestleApp(App):
         # Moves within category
         if self._menu_stage == "MOVES":
             cat = str(self._selected_category or "UTILITY")
-            # Show momentum-gated moves, but render them disabled until eligible.
-            avail = self._available_moves(self.player, self.cpu, ignore_momentum_gate=True)
+            # Show momentum/weight-gated moves, but render them disabled until eligible.
+            avail = self._available_moves(self.player, self.cpu, ignore_momentum_gate=True, ignore_weight_gate=True)
 
             def in_cat(name: str) -> bool:
                 t = str(MOVES[name].get("type", "Setup"))
@@ -3157,7 +3875,20 @@ class WrestleApp(App):
                 no_grit = int(self.player.grit) < int(mc)
                 gate_req = int(self._move_req_momentum_min(slug))
                 gate_locked = bool(gate_req > 0 and (not self._has_momentum_for_move(self.player, slug)))
-                disabled = bool((finisher and (not has_doubles)) or no_grit or gate_locked)
+                weight_locked = False
+                try:
+                    if bool(mv.get("is_lift", False)):
+                        weights = {"CRUISER": 1, "HEAVY": 2, "SUPER HEAVY": 3, "SUPERHEAVY": 3}
+                        u_wc = str(getattr(self.player, "weight_class", "Heavy") or "Heavy").upper().strip()
+                        t_wc = str(getattr(self.cpu, "weight_class", "Heavy") or "Heavy").upper().strip()
+                        u_wt = int(weights.get(u_wc, 2))
+                        t_wt = int(weights.get(t_wc, 2))
+                        if u_wt < t_wt and float(self.cpu.hp_pct()) > 0.50:
+                            weight_locked = True
+                except Exception:
+                    weight_locked = False
+
+                disabled = bool((finisher and (not has_doubles)) or no_grit or gate_locked or weight_locked)
                 t = str(mv.get("type", "Setup"))
 
                 if finisher and not disabled:
@@ -3175,7 +3906,7 @@ class WrestleApp(App):
                 star = "★ " if finisher else ""
                 dmg = int(mv.get('damage', 0))
                 if slug == MOVE_DEFENSIVE:
-                    label = f"[b]{star}{disp}[/b]\n[size=13sp]Discard (≤5) to Block[/size]"
+                    label = f"[b]{star}{disp}[/b]\n[size=13sp]Discard (≤5) to Block[/size]\n[size=12sp]Perfect Guard if you lose by ≤2[/size]"
                 elif slug == MOVE_FIGHT_FOR_CONTROL:
                     if self.player.is_in_grapple() and self.player.grapple_role == GrappleRole.OFFENSE:
                         sub = "Upgrade to Strong Grapple"
@@ -3185,11 +3916,18 @@ class WrestleApp(App):
                         sub = "Contest Control"
                     label = f"[b]{star}{disp}[/b]\n[size=13sp]{sub}[/size]"
                 else:
-                    label = f"[b]{star}{disp}[/b]\n[size=13sp]{dmg} DMG | [color={COLOR_HEX_GRIT}]{mc} GRIT[/color][/size]"
-                if no_grit and slug not in {MOVE_DEFENSIVE, MOVE_FIGHT_FOR_CONTROL}:
-                    label = label + f"\n[size=12sp][color={COLOR_HEX_HP_STRAINED}]NO GRIT[/color][/size]"
-                if gate_locked:
-                    label = label + f"\n[size=12sp][color={COLOR_HEX_HP_STRAINED}]NEED {gate_req} MOMENTUM[/color][/size]"
+                    title = f"[b]{star}{disp}[/b]"
+                    if weight_locked:
+                        info = f"[color={COLOR_HEX_HP_STRAINED}]TOO HEAVY[/color]"
+                    elif gate_locked and no_grit:
+                        info = f"[color={COLOR_HEX_HP_STRAINED}]NO GRIT + NEED {gate_req} MOMENTUM[/color]"
+                    elif gate_locked:
+                        info = f"[color={COLOR_HEX_HP_STRAINED}]NEED {gate_req} MOMENTUM[/color]"
+                    elif no_grit:
+                        info = f"[color={COLOR_HEX_HP_STRAINED}]NO GRIT[/color]"
+                    else:
+                        info = f"{dmg} DMG | [color={COLOR_HEX_GRIT}]{mc} GRIT[/color]"
+                    label = f"{title}\n[size=13sp]{info}[/size]"
                 btn = BorderedButton(
                     text=label,
                     markup=True,
@@ -3218,8 +3956,24 @@ class WrestleApp(App):
             if req > 0:
                 have = int(self._momentum_advantage_for(self.player))
                 self._log(f"Need momentum {req} (you have {have}).")
-            else:
-                self._log("That move isn't legal right now.")
+                return
+
+            # Weight-gated lifts
+            try:
+                mv = MOVES.get(str(name), {})
+                if bool(mv.get("is_lift", False)):
+                    weights = {"CRUISER": 1, "HEAVY": 2, "SUPER HEAVY": 3, "SUPERHEAVY": 3}
+                    u_wc = str(getattr(self.player, "weight_class", "Heavy") or "Heavy").upper().strip()
+                    t_wc = str(getattr(self.cpu, "weight_class", "Heavy") or "Heavy").upper().strip()
+                    u_wt = int(weights.get(u_wc, 2))
+                    t_wt = int(weights.get(t_wc, 2))
+                    if u_wt < t_wt and float(self.cpu.hp_pct()) > 0.50:
+                        self._log("Too heavy to lift while they're still fresh.")
+                        return
+            except Exception:
+                pass
+
+            self._log("That move isn't legal right now.")
             return
 
         # Lock Up resolves immediately (no card selection).
@@ -3366,6 +4120,27 @@ class WrestleApp(App):
 
             Clock.schedule_once(close_and_apply, 0.55)
 
+        def cancel(_inst=None) -> None:
+            if done["flag"]:
+                return
+            done["flag"] = True
+            if timeout_ev["ev"] is not None:
+                try:
+                    timeout_ev["ev"].cancel()
+                except Exception:
+                    pass
+            try:
+                pop.dismiss()
+            except Exception:
+                pass
+            try:
+                self._log("Lock Up canceled.")
+            except Exception:
+                pass
+            self.selected_move = None
+            self.selected_cards.clear()
+            self._set_menu_stage("CATEGORIES")
+
         def timeout(_dt):
             finish(False, "Time's up—position lost!")
 
@@ -3400,10 +4175,13 @@ class WrestleApp(App):
 
         b_push = Button(text="PUSH", background_normal="", background_color=COLOR_BTN_BASE)
         b_hold = Button(text="HOLD", background_normal="", background_color=COLOR_BTN_BASE)
+        b_cancel = Button(text="CANCEL", background_normal="", background_color=COLOR_BTN_BASE)
         b_push.bind(on_release=push)
         b_hold.bind(on_release=hold)
+        b_cancel.bind(on_release=cancel)
         right.add_widget(b_push)
         right.add_widget(b_hold)
+        right.add_widget(b_cancel)
 
         refresh()
         timeout_ev["ev"] = Clock.schedule_once(timeout, 12.0)
@@ -3458,9 +4236,9 @@ class WrestleApp(App):
             if self.selected_move != MOVE_DEFENSIVE and len(self.selected_cards) == 1:
                 first_idx = next(iter(self.selected_cards))
                 same_val = (int(hand[first_idx].value) == int(hand[idx].value))
-                same_col = (str(hand[first_idx].color) == str(hand[idx].color))
+                same_col = (str(hand[first_idx].color) == str(hand[idx].color)) and (str(hand[idx].color) != "GRAY")
                 if not (same_val or same_col):
-                    self._log("Two-card play: must match value (doubles) OR match color (+2 to high card).")
+                    self._log("Two-card play: must match value (doubles) OR match a non-gray color (+2 to high card).")
                     return
 
             self.selected_cards.add(idx)
@@ -3491,10 +4269,12 @@ class WrestleApp(App):
                 self.hint_label.text = "Pick a move."
             elif self.selected_move == MOVE_DEFENSIVE:
                 self.hint_label.text = "Defensive: discard 0–2 cards (≤5)."
+            elif self.selected_move == MOVE_REST:
+                self.hint_label.text = "Rest: no cards needed. Press PLAY."
             elif self.selected_move == MOVE_GROGGY_RECOVERY:
-                self.hint_label.text = "Groggy Recovery: play 1 card, doubles, or same-color (+2 to high). Max value 7."
+                self.hint_label.text = "Groggy Recovery: play 1 card, doubles, or same-color (non-gray, +2 to high). Max value 7."
             else:
-                self.hint_label.text = "Select 1 card, doubles, or same-color (+2 to high), then PLAY."
+                self.hint_label.text = "Select 1 card, doubles, or same-color (non-gray, +2 to high), then PLAY. Type bonus applies if any chosen card matches the move."
         elif self._menu_stage == "ESCAPE":
             self.hint_label.text = "ESCAPE! Select 1 card, then PLAY."
         else:
@@ -3518,6 +4298,8 @@ class WrestleApp(App):
             selected_count = len(self.selected_cards)
             if move_name == MOVE_DEFENSIVE:
                 enabled = (selected_count in {0, 1, 2}) and (selected_count == 0 or bool(cards))
+            elif move_name == MOVE_REST:
+                enabled = (selected_count == 0)
             else:
                 enabled = (selected_count in {1, 2}) and bool(cards)
 
@@ -3592,7 +4374,7 @@ class WrestleApp(App):
                 return
         else:
             if not p_cards:
-                self._log("Select 1 card, doubles, or same-color (+2 to high).")
+                self._log("Select 1 card, doubles, or same-color (non-gray, +2 to high).")
                 return
 
         total_cost = self._effective_cost(self.player, self.selected_move, p_cards)
