@@ -78,6 +78,46 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
 ]
 
 
+# Always-available baseline actions.
+# Goal: avoid "no legal moves" situations by ensuring every wrestler has
+# at least a few low-cost options in common states.
+BASE_MOVES_ALL_WRESTLERS: list[str] = [
+    # Neutral (STANDING vs STANDING)
+    "strike_chop",              # 0 grit, light damage
+    "strike_desperation_slap",  # 0 grit, tiny damage
+
+    # Movement / spacing
+    "util_charge",              # sets RUNNING for follow-ups
+
+    # Grapple (any tier)
+    "strike_gut_punch",         # 0 grit, works in GRAPPLE_ANY
+    "strike_ear_clap",          # 0 grit, GRAPPLE_DEFENSE option
+    "grap_wrist_escape",        # 0 grit, quick chain escape (weak grapple)
+
+    # Irish whip follow-up
+    "strike_rebound_clothesline",  # RUNNING vs TOSSED
+
+    # Top rope
+    "air_elbow_drop",           # 0 grit, basic aerial to STANDING target
+    "air_body_splash",          # 0 grit, basic aerial to GROUNDED target
+
+    # Grounded opponent utility
+    "util_pick_up",             # should be cheap; see move DB
+]
+
+
+def _dedupe_keep_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for x in items:
+        s = str(x)
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
 class WrestlerState(str, Enum):
     STANDING = "STANDING"
     GROUNDED = "GROUNDED"
@@ -213,6 +253,10 @@ class Wrestler:
                     self.finisher = str(prof_finisher)
             except Exception:
                 pass
+
+        # Ensure baseline moves are always available (when using movesets).
+        if self.moveset is not None:
+            self.moveset = _dedupe_keep_order(list(BASE_MOVES_ALL_WRESTLERS) + list(self.moveset))
             try:
                 prof_traits = self.profile.get("ai_traits")
                 if isinstance(prof_traits, dict):

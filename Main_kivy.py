@@ -154,7 +154,12 @@ SUBMISSION_TICK_DAMAGE = 4
 
 # Pin anti-spam: when a defender escapes a pin, future pin escapes get easier.
 # (Threshold is multiplied by this factor each successful pin escape.)
-TUNING_PIN_ESCAPE_THRESHOLD_MULT_ON_SUCCESS = 0.75
+TUNING_PIN_ESCAPE_THRESHOLD_MULT_ON_SUCCESS = 0.85
+
+# Pin anti-spam recovery: taking damage makes future pin escapes harder again
+# by slowly recovering the pin escape multiplier back toward 1.0.
+# This fixes the "threshold keeps going net negative" feel after repeated kickouts.
+TUNING_PIN_ESCAPE_THRESHOLD_MULT_RECOVER_PER_DAMAGE = 0.0025
 
 # FIRE UP!: cash in momentum to enter a short buff state.
 # - +2 bonus to each played card for a few turns (duration based on momentum tier)
@@ -576,6 +581,35 @@ class WrestleApp(App):
             shorten_from="right",
             max_lines=1,
         )
+
+        # Compact per-wrestler DAZED indicator (keeps layout stable).
+        daze_yellow = get_color_from_hex(COLOR_HEX_HP_STRAINED)
+        self.player_dazed_small = Label(
+            text="",
+            color=daze_yellow,
+            size_hint_y=None,
+            height=dp(12),
+            font_size="10sp",
+            halign="center",
+            valign="middle",
+            shorten=True,
+            shorten_from="right",
+            max_lines=1,
+            opacity=0.0,
+        )
+        self.cpu_dazed_small = Label(
+            text="",
+            color=daze_yellow,
+            size_hint_y=None,
+            height=dp(12),
+            font_size="10sp",
+            halign="center",
+            valign="middle",
+            shorten=True,
+            shorten_from="right",
+            max_lines=1,
+            opacity=0.0,
+        )
         self.player_state_small.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
         self.cpu_state_small.bind(size=lambda inst, _v: setattr(inst, 'text_size', inst.size))
         self.player_hp_bar = ProgressBar(max=MAX_HEALTH, value=MAX_HEALTH, size_hint_y=None, height=dp(14))
@@ -590,9 +624,11 @@ class WrestleApp(App):
             pass
         left_hp.add_widget(self.player_hp_label)
         left_hp.add_widget(self.player_state_small)
+        left_hp.add_widget(self.player_dazed_small)
         left_hp.add_widget(self.player_hp_bar)
         right_hp.add_widget(self.cpu_hp_label)
         right_hp.add_widget(self.cpu_state_small)
+        right_hp.add_widget(self.cpu_dazed_small)
         right_hp.add_widget(self.cpu_hp_bar)
         hp_row.add_widget(left_hp)
         hp_row.add_widget(right_hp)
@@ -2436,6 +2472,15 @@ class WrestleApp(App):
         # doesn't capitalize with a TOSSED-targeting attack, they recover.
         def _capitalized_on_tossed(attacker_move: str) -> bool:
             mv = MOVES.get(str(attacker_move), {})
+
+            # If you used this beat to build a RUNNING follow-up (e.g., Charge),
+            # keep the tossed window open so rebound attacks can happen next.
+            try:
+                if str(mv.get("set_user_state", "")) == "RUNNING":
+                    return True
+            except Exception:
+                pass
+
             if str(mv.get("req_target_state", "ANY")) != "TOSSED":
                 return False
             t = str(mv.get("type", "Setup"))
@@ -2515,6 +2560,39 @@ class WrestleApp(App):
             pass
 
         return max(8, min(26, int(meter)))
+
+    def _recover_pin_escape_mult_from_damage(self, defender: Wrestler, dealt: int) -> None:
+        """Recover the defender's pin escape multiplier back toward 1.0.
+
+        Each successful kickout reduces `pin_escape_threshold_mult`, making future pins easier to escape.
+        This recovery nudges it back up as the defender takes damage, so repeated beatdowns restore
+        meaningful pin thresholds.
+        """
+        try:
+            dmg = max(0, int(dealt))
+        except Exception:
+            return
+        if dmg <= 0:
+            return
+
+        try:
+            cur = float(getattr(defender, "pin_escape_threshold_mult", 1.0) or 1.0)
+        except Exception:
+            return
+        cur = max(0.0, min(1.0, float(cur)))
+        if cur >= 1.0:
+            return
+
+        # Scale recovery: the more hurt they are, the faster pins become viable again.
+        try:
+            hp_pct = float(defender.hp_pct())
+        except Exception:
+            hp_pct = 1.0
+        missing = max(0.0, min(1.0, 1.0 - float(hp_pct)))
+        scale = 0.75 + 0.75 * float(missing)  # 0.75..1.5
+
+        inc = float(dmg) * float(TUNING_PIN_ESCAPE_THRESHOLD_MULT_RECOVER_PER_DAMAGE) * float(scale)
+        defender.pin_escape_threshold_mult = min(1.0, float(cur) + float(inc))
 
     def _groggy_progress_from_cards(self, cards: list) -> int:
         if not cards:
@@ -2891,6 +2969,12 @@ class WrestleApp(App):
             target_part = move.get("target_part", None)
             dealt = defender.take_damage(raw_damage, target_part=str(target_part) if target_part else None)
             self._log(f"{self._fmt_name(defender)} takes {self._fmt_damage(dealt)}.")
+
+            # Pin anti-spam recovery: damage restores pin viability over time.
+            try:
+                self._recover_pin_escape_mult_from_damage(defender, int(dealt))
+            except Exception:
+                pass
 
             # Apply DAZED probabilistically (HP-based).
             try:
@@ -3360,6 +3444,16 @@ class WrestleApp(App):
                 self.player_state_small.text = f"STATE: {p_state}" if p_role == "NEUTRAL" else f"STATE: {p_state} ({p_role})"
             if hasattr(self, "cpu_state_small"):
                 self.cpu_state_small.text = f"STATE: {c_state}" if c_role == "NEUTRAL" else f"STATE: {c_state} ({c_role})"
+
+            # Compact DAZED flags (additive status, not a position).
+            if hasattr(self, "player_dazed_small"):
+                pd = int(getattr(self.player, "daze_turns", 0) or 0)
+                self.player_dazed_small.text = "*DAZED*" if pd > 0 else ""
+                self.player_dazed_small.opacity = 1.0 if pd > 0 else 0.0
+            if hasattr(self, "cpu_dazed_small"):
+                cd = int(getattr(self.cpu, "daze_turns", 0) or 0)
+                self.cpu_dazed_small.text = "*DAZED*" if cd > 0 else ""
+                self.cpu_dazed_small.opacity = 1.0 if cd > 0 else 0.0
         except Exception:
             pass
 
@@ -3468,7 +3562,7 @@ class WrestleApp(App):
                 return None
 
         def pending_mod_parts(card) -> list[str]:
-            parts: list[str] = []
+            parts: list[tuple[int, str]] = []
 
             # Move-type color bonus (+1) is conditional on selected move.
             mt = move_type_for_selected()
@@ -3476,7 +3570,7 @@ class WrestleApp(App):
                 try:
                     tb = int(card.color_bonus(mt))
                     if tb:
-                        parts.append(f"+{tb} TYPE")
+                        parts.append((int(tb), "TYPE"))
                 except Exception:
                     pass
 
@@ -3484,14 +3578,14 @@ class WrestleApp(App):
             try:
                 nb = int(getattr(self.player, "next_card_bonus", 0))
                 if nb > 0:
-                    parts.append(f"+{nb} HYPE")
+                    parts.append((int(nb), "HYPE"))
             except Exception:
                 pass
 
             # FIRE UP!: bonus to each played card while active.
             try:
                 if int(getattr(self.player, "fired_up_turns_remaining", 0) or 0) > 0:
-                    parts.append(f"+{int(TUNING_FIRED_UP_CARD_BONUS_PER_CARD)} FIRE")
+                    parts.append((int(TUNING_FIRED_UP_CARD_BONUS_PER_CARD), "FIRE"))
             except Exception:
                 pass
 
@@ -3509,11 +3603,18 @@ class WrestleApp(App):
                 if mom < 0:
                     mom_scaled = -int(mom_scaled)
                 if int(mom_scaled) > 0:
-                    parts.append(f"+{int(mom_scaled)} MOM")
+                    parts.append((int(mom_scaled), "MOM"))
             except Exception:
                 pass
 
-            return parts
+            # Mobile-friendly: show detailed label only if there's exactly one bonus.
+            if not parts:
+                return []
+            if len(parts) == 1:
+                amt, tag = parts[0]
+                return [f"+{int(amt)} {str(tag)}"]
+            total = sum(int(a) for a, _t in parts)
+            return [f"+{int(total)}"]
 
         for i, card in enumerate(self.player.hand):
             # Color logic
@@ -4129,6 +4230,17 @@ class WrestleApp(App):
             self._log("CPU wins the lock up and takes control!")
             self.player.grapple_role = GrappleRole.DEFENSE
             self.cpu.grapple_role = GrappleRole.OFFENSE
+
+        # If the winner is dazed/groggy but still took control, clear it.
+        # Otherwise they can get an awkward "recovery" beat while in advantage.
+        try:
+            winner = self.player if bool(player_won) else self.cpu
+            if int(getattr(winner, "daze_turns", 0) or 0) > 0 or bool(getattr(winner, "is_groggy", False)):
+                winner.daze_turns = 0
+                winner.is_groggy = False
+                winner.groggy_meter = 0
+        except Exception:
+            pass
 
         self.selected_move = None
         self.selected_cards.clear()
