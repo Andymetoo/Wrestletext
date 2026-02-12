@@ -218,6 +218,13 @@ CPU_DEFENSIVE_BASE_PENALTY = 18
 CPU_DEFENSIVE_EMERGENCY_HP_PCT = 0.35
 CPU_DEFENSIVE_EMERGENCY_BONUS = 14
 
+# Character Select: difficulty/power level (derived from ai_traits)
+AI_POWER_WEIGHT_GREED = 2.00
+AI_POWER_WEIGHT_GOOD = 1.50
+AI_POWER_WEIGHT_RND = 1.00
+AI_POWER_WEIGHT_BAD = 0.75
+AI_POWER_SCALE = 100  # final score is roughly 75..200
+
 # Auto-grit: prevent high-damage 0-cost moves from being "free".
 TUNING_AUTO_GRIT_ON_DAMAGE = True
 AUTO_GRIT_ONLY_WHEN_BASE_COST_ZERO = True
@@ -229,13 +236,18 @@ AUTO_GRIT_PER_STEP = 1
 #  ✨ VFX (Clash / Damage Overlay)
 # ==========================================
 # Overlay alpha at start (0..1)
-VFX_OVERLAY_ALPHA = 0.22
+VFX_OVERLAY_ALPHA = 0.4
 # Base fade duration in seconds (no damage)
-VFX_OVERLAY_FADE_BASE = 0.35
+VFX_OVERLAY_FADE_BASE = 0.45
 # Max fade duration in seconds (heavy damage)
 VFX_OVERLAY_FADE_MAX = 1.10
 # Damage threshold that maps to max fade
 VFX_OVERLAY_DAMAGE_CAP = 20
+
+# Duration behavior:
+# - "DYNAMIC": scales between BASE..MAX based on damage
+# - "FLAT": always uses VFX_OVERLAY_FADE_MAX
+VFX_OVERLAY_DURATION_MODE = "DYNAMIC"  # DYNAMIC | FLAT
 
 # ==========================================
 #  📏 DIMENSIONS & LAYOUT
@@ -388,7 +400,7 @@ class ScreenFlash(Widget):
         r, g, b, _a = (list(self.rgba) + [0, 0, 0, 0])[:4]
         self._color.rgba = (float(r), float(g), float(b), float(self.alpha))
 
-    def flash(self, *, rgb: tuple[float, float, float], duration: float) -> None:
+    def flash(self, *, rgb: tuple[float, float, float], duration: float, alpha: float | None = None) -> None:
         if self._fade_ev is not None:
             try:
                 self._fade_ev.cancel()
@@ -397,7 +409,9 @@ class ScreenFlash(Widget):
             self._fade_ev = None
 
         self.rgba = [float(rgb[0]), float(rgb[1]), float(rgb[2]), 1.0]
-        self.alpha = float(VFX_OVERLAY_ALPHA)
+        start_alpha = float(VFX_OVERLAY_ALPHA) if alpha is None else float(alpha)
+        start_alpha = max(0.0, min(1.0, float(start_alpha)))
+        self.alpha = float(start_alpha)
         self._t = 0.0
         self._dur = max(0.05, float(duration))
 
@@ -405,7 +419,7 @@ class ScreenFlash(Widget):
             self._t += float(dt)
             p = min(1.0, self._t / max(0.001, self._dur))
             # Linear fade to 0
-            self.alpha = float(VFX_OVERLAY_ALPHA) * (1.0 - p)
+            self.alpha = float(start_alpha) * (1.0 - p)
             if p >= 1.0:
                 self.alpha = 0.0
                 if self._fade_ev is not None:
@@ -837,18 +851,7 @@ class WrestleApp(App):
         # 2. ARENA (Middle)
         arena_box = BoxLayout(orientation='vertical', size_hint_y=1)
 
-        # A0. Log Controls
-        log_controls = BoxLayout(orientation='horizontal', size_hint_y=None, height=dp(32), padding=[PAD_SM, 0, PAD_SM, 0])
-        export_btn = Button(
-            text="EXPORT LOG",
-            background_color=COLOR_BTN_BASE,
-            background_normal="",
-            size_hint_x=None,
-            width=dp(120),
-        )
-        export_btn.bind(on_release=self._export_match_log)
-        log_controls.add_widget(export_btn)
-        arena_box.add_widget(log_controls)
+        # (Log Controls removed; Export/Rules moved into a single Settings menu.)
         
         # A. Game Log (Top of Arena)
         self.log_scroll = ScrollView(size_hint_y=ARENA_LOG_PCT)
@@ -882,13 +885,13 @@ class WrestleApp(App):
         )
         self.return_btn.bind(on_release=self._on_return_click)
 
-        self.rules_btn = Button(
-            text="RULES",
+        self.settings_btn = Button(
+            text="MENU",
             background_color=COLOR_BTN_BASE,
             background_normal="",
             size_hint_x=0.18,
         )
-        self.rules_btn.bind(on_release=self._show_rules)
+        self.settings_btn.bind(on_release=self._open_settings_menu)
 
         self.hint_label = Label(
             text="Pick a category.",
@@ -912,7 +915,7 @@ class WrestleApp(App):
         self.play_btn.bind(on_release=self._on_play_click)
 
         controls.add_widget(self.return_btn)
-        controls.add_widget(self.rules_btn)
+        controls.add_widget(self.settings_btn)
         controls.add_widget(self.hint_label)
         controls.add_widget(self.play_btn)
         main.add_widget(controls)
@@ -964,6 +967,34 @@ class WrestleApp(App):
         bits = [b for b in [wc, st] if str(b).strip()]
         left = " ".join(bits) if bits else "Balanced"
         return f"{left} ({arch})"
+
+    def _profile_power_level(self, prof: dict) -> int:
+        traits = prof.get("ai_traits", {})
+        if not isinstance(traits, dict):
+            traits = {}
+
+        def ti(k: str) -> int:
+            try:
+                return max(0, int(traits.get(k, 0) or 0))
+            except Exception:
+                return 0
+
+        g = ti("GREED")
+        good = ti("GOOD")
+        bad = ti("BAD")
+        rnd = ti("RND")
+        total = int(g + good + bad + rnd)
+        if total <= 0:
+            return int(AI_POWER_SCALE)
+
+        weighted = (
+            float(g) * float(AI_POWER_WEIGHT_GREED)
+            + float(good) * float(AI_POWER_WEIGHT_GOOD)
+            + float(rnd) * float(AI_POWER_WEIGHT_RND)
+            + float(bad) * float(AI_POWER_WEIGHT_BAD)
+        )
+        avg = float(weighted) / float(total)
+        return int(round(float(avg) * float(AI_POWER_SCALE)))
 
     def _profile_bio_markup(self, slug: str) -> str:
         prof = dict(ROSTER.get(str(slug), {}) or {})
@@ -1147,12 +1178,13 @@ class WrestleApp(App):
             prof = dict(ROSTER.get(slug, {}) or {})
             nm = str(prof.get("name", slug))
             tline = self._profile_type_line(prof)
-            label = f"[b]{nm}[/b]\n[size=13sp]{tline}[/size]"
+            pwr = self._profile_power_level(prof)
+            label = f"[b]{nm}[/b]  [size=12sp]ELO {pwr}[/size]\n[size=13sp]{tline}[/size]"
             btn = BorderedButton(
                 text=label,
                 markup=True,
                 size_hint_y=None,
-                height=dp(56),
+                height=dp(68),
                 background_normal="",
                 background_color=COLOR_BTN_BASE,
             )
@@ -1163,6 +1195,50 @@ class WrestleApp(App):
             btn.bind(on_release=self._on_select_wrestler)
             self._select_buttons[str(slug)] = btn
             self._select_list.add_widget(btn)
+
+    def _open_settings_menu(self, _inst=None) -> None:
+        try:
+            body = BoxLayout(orientation="vertical", spacing=dp(10), padding=[dp(12), dp(12), dp(12), dp(12)])
+            b_rules = Button(text="RULES", background_normal="", background_color=COLOR_BTN_BASE, size_hint_y=None, height=dp(52))
+            b_export = Button(text="EXPORT LOG", background_normal="", background_color=COLOR_BTN_BASE, size_hint_y=None, height=dp(52))
+            b_reselect = Button(text="RESELECT WRESTLERS", background_normal="", background_color=COLOR_BTN_BASE, size_hint_y=None, height=dp(52))
+            b_close = Button(text="CLOSE", background_normal="", background_color=COLOR_BTN_BASE, size_hint_y=None, height=dp(46))
+
+            body.add_widget(b_rules)
+            body.add_widget(b_export)
+            body.add_widget(b_reselect)
+            body.add_widget(b_close)
+
+            pop = Popup(title="Menu", content=body, size_hint=(0.85, 0.55), auto_dismiss=True)
+
+            def go_rules(_i=None) -> None:
+                try:
+                    pop.dismiss()
+                except Exception:
+                    pass
+                self._show_rules()
+
+            def go_export(_i=None) -> None:
+                try:
+                    pop.dismiss()
+                except Exception:
+                    pass
+                self._export_match_log()
+
+            def go_reselect(_i=None) -> None:
+                try:
+                    pop.dismiss()
+                except Exception:
+                    pass
+                self._enter_character_select()
+
+            b_rules.bind(on_release=go_rules)
+            b_export.bind(on_release=go_export)
+            b_reselect.bind(on_release=go_reselect)
+            b_close.bind(on_release=lambda *_a: pop.dismiss())
+            pop.open()
+        except Exception:
+            return
 
     def _update_character_select_ui(self) -> None:
         stage = str(getattr(self, "_select_stage", "PLAYER"))
@@ -1287,10 +1363,14 @@ class WrestleApp(App):
         """outcome: 'player' | 'cpu' | 'neutral'"""
         if not hasattr(self, "_flash"):
             return
-        dmg = max(0, int(damage))
-        cap = max(1, int(VFX_OVERLAY_DAMAGE_CAP))
-        p = min(1.0, float(dmg) / float(cap))
-        dur = float(VFX_OVERLAY_FADE_BASE) + (float(VFX_OVERLAY_FADE_MAX) - float(VFX_OVERLAY_FADE_BASE)) * p
+        mode = str(VFX_OVERLAY_DURATION_MODE or "DYNAMIC").upper().strip()
+        if mode == "FLAT":
+            dur = float(VFX_OVERLAY_FADE_MAX)
+        else:
+            dmg = max(0, int(damage))
+            cap = max(1, int(VFX_OVERLAY_DAMAGE_CAP))
+            p = min(1.0, float(dmg) / float(cap))
+            dur = float(VFX_OVERLAY_FADE_BASE) + (float(VFX_OVERLAY_FADE_MAX) - float(VFX_OVERLAY_FADE_BASE)) * p
 
         if outcome == "player":
             rgb = (0.0, 0.78, 0.30)
@@ -1299,7 +1379,7 @@ class WrestleApp(App):
         else:
             rgb = (0.65, 0.65, 0.65)
         try:
-            self._flash.flash(rgb=rgb, duration=dur)
+            self._flash.flash(rgb=rgb, duration=float(dur), alpha=float(VFX_OVERLAY_ALPHA))
         except Exception:
             pass
 
