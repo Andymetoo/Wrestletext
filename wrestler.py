@@ -83,6 +83,8 @@ DEFAULT_BRAWLER_MOVESET: list[str] = [
 # at least a few low-cost options in common states.
 BASE_MOVES_ALL_WRESTLERS: list[str] = [
     # Neutral (STANDING vs STANDING)
+    "strike_light_jab",         # 0 grit, basic strike option
+    "strike_light_kick",        # 0 grit, basic strike option
     "strike_chop",              # 0 grit, light damage
     "strike_desperation_slap",  # 0 grit, tiny damage
 
@@ -91,6 +93,7 @@ BASE_MOVES_ALL_WRESTLERS: list[str] = [
 
     # Grapple (any tier)
     "strike_gut_punch",         # 0 grit, works in GRAPPLE_ANY
+    "strike_grapple_elbow",     # 0 grit, GRAPPLE_WEAK offense strike
     "strike_ear_clap",          # 0 grit, GRAPPLE_DEFENSE option
     "grap_wrist_escape",        # 0 grit, quick chain escape (weak grapple)
 
@@ -103,6 +106,7 @@ BASE_MOVES_ALL_WRESTLERS: list[str] = [
 
     # Grounded opponent utility
     "util_pick_up",             # should be cheap; see move DB
+    "strike_grounded_punch",    # 0 grit, basic grounded attack
 ]
 
 

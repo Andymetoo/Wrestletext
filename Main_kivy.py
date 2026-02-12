@@ -120,6 +120,16 @@ COLOR_CARD_SELECTED = (1.00, 0.20, 0.75, 1)
 TUNING_ENABLE_PASSIVE_REGEN = True
 TUNING_GRIT_PASSIVE_REGEN = 2  # Grit recovered if you spent 0 this turn
 
+# --- Tinker: Hype Economy (Taunt + Hype Shop) ---
+# These were previously hard-coded in execution/UI logic.
+# Goal: prevent "Hype Shop > Grit Refill" from being an unlimited grit loop.
+TUNING_TAUNT_HYPE_BASE = 20
+TUNING_TAUNT_HYPE_PER_CARD_VALUE = 2
+TUNING_TAUNT_HYPE_MAX = 45
+
+TUNING_HYPE_SHOP_GRIT_REFILL_COST = 50
+TUNING_HYPE_SHOP_GRIT_REFILL_AMOUNT = 3
+
 # Rest punish: if you get hit while Resting, your recovery is interrupted.
 # Additionally, the hit has a chance to become a "caught resting" critical (150% damage).
 TUNING_CAUGHT_RESTING_CRIT_CHANCE = 0.25
@@ -174,6 +184,10 @@ TUNING_DAZE_CHANCE_SCALAR = 1.5     # Lower HP => higher chance
 TUNING_DAZE_MAX_TURNS = 3           # Max duration applied
 TUNING_DAZE_WAKE_DAMAGE = 15        # If hit this hard while dazed, wake up instantly
 
+# Daze death-spiral protection: after clearing groggy/daze, grant brief immunity
+# to re-applying DAZED so a wrestler can re-stabilize.
+TUNING_DAZE_COOLDOWN_TURNS = 2
+
 # Strike knockdowns: for strike moves that *can* ground a standing/running opponent,
 # chance = missing_hp_pct * 100 * scalar (clamped to 0..100).
 TUNING_STRIKE_KNOCKDOWN_CHANCE_SCALAR = 1.0
@@ -197,6 +211,12 @@ CPU_GETUP_BONUS_HEALTHY = 45
 CPU_UPKICK_PENALTY_WHEN_HEALTHY = 22
 CPU_REST_BONUS_WHEN_HURT = 28
 CPU_REST_HURT_PCT = 0.45
+
+# CPU anti-turtle tuning
+CPU_RND_PICK_FROM_TOP_N = 5
+CPU_DEFENSIVE_BASE_PENALTY = 18
+CPU_DEFENSIVE_EMERGENCY_HP_PCT = 0.35
+CPU_DEFENSIVE_EMERGENCY_BONUS = 14
 
 # Auto-grit: prevent high-damage 0-cost moves from being "free".
 TUNING_AUTO_GRIT_ON_DAMAGE = True
@@ -1304,6 +1324,14 @@ class WrestleApp(App):
                 t = int(getattr(w, "fired_up_turns_remaining", 0) or 0)
                 if t > 0:
                     w.fired_up_turns_remaining = max(0, t - 1)
+            except Exception:
+                pass
+
+            # Tick down daze cooldown (prevents immediate re-dazing loops).
+            try:
+                dc = int(getattr(w, "daze_cooldown_turns", 0) or 0)
+                if dc > 0:
+                    w.daze_cooldown_turns = max(0, int(dc) - 1)
             except Exception:
                 pass
 
@@ -2636,6 +2664,11 @@ class WrestleApp(App):
         if int(who.groggy_meter) <= 0:
             who.is_groggy = False
             who.groggy_meter = 0
+            try:
+                who.daze_turns = 0
+                who.daze_cooldown_turns = max(int(getattr(who, "daze_cooldown_turns", 0) or 0), int(TUNING_DAZE_COOLDOWN_TURNS))
+            except Exception:
+                pass
             self._log(f"{self._fmt_name(who)} shakes off the stun!")
         else:
             self._log(f"Stunned... (Groggy: {int(who.groggy_meter)} left)")
@@ -2909,9 +2942,9 @@ class WrestleApp(App):
             return
 
         if move_name == MOVE_TAUNT:
-            base = int(move.get("hype_gain", 0))
-            bonus = int(card_value_sum) * 3
-            gained = int(base) + int(bonus)
+            base = int(TUNING_TAUNT_HYPE_BASE)
+            bonus = int(card_value_sum) * int(TUNING_TAUNT_HYPE_PER_CARD_VALUE)
+            gained = min(int(TUNING_TAUNT_HYPE_MAX), int(base) + int(bonus))
             attacker.add_hype(gained)
             self._log(f"{self._fmt_name(attacker)} gets fired up! (+{gained} Hype)")
             return
@@ -2979,17 +3012,20 @@ class WrestleApp(App):
             # Apply DAZED probabilistically (HP-based).
             try:
                 if not bool(was_dazed):
-                    turns = int(self._calc_daze_application(defender, move))
-                    if turns > 0 and int(getattr(defender, "hp", 0)) > 0:
-                        defender.daze_turns = max(int(getattr(defender, "daze_turns", 0) or 0), int(turns))
-                        try:
-                            defender.is_groggy = True
-                            seed = int(self._seed_groggy_meter(defender))
-                            cur = int(getattr(defender, "groggy_meter", 0) or 0)
-                            defender.groggy_meter = max(int(cur), int(seed))
-                        except Exception:
-                            pass
-                        self._log(f"{self._fmt_name(defender)} is DAZED! ({int(defender.daze_turns)})")
+                    cd = int(getattr(defender, "daze_cooldown_turns", 0) or 0)
+                    if cd <= 0:
+                        turns = int(self._calc_daze_application(defender, move))
+                        if turns > 0 and int(getattr(defender, "hp", 0)) > 0:
+                            defender.daze_turns = max(int(getattr(defender, "daze_turns", 0) or 0), int(turns))
+                            try:
+                                defender.is_groggy = True
+                                seed = int(self._seed_groggy_meter(defender))
+                                cur = int(getattr(defender, "groggy_meter", 0) or 0)
+                                defender.groggy_meter = max(int(cur), int(seed))
+                                defender.daze_cooldown_turns = 0
+                            except Exception:
+                                pass
+                            self._log(f"{self._fmt_name(defender)} is DAZED! ({int(defender.daze_turns)})")
             except Exception:
                 pass
 
@@ -3005,6 +3041,7 @@ class WrestleApp(App):
                         try:
                             defender.is_groggy = False
                             defender.groggy_meter = 0
+                            defender.daze_cooldown_turns = max(int(getattr(defender, "daze_cooldown_turns", 0) or 0), int(TUNING_DAZE_COOLDOWN_TURNS))
                         except Exception:
                             pass
                     else:
@@ -3014,6 +3051,7 @@ class WrestleApp(App):
                             try:
                                 defender.is_groggy = False
                                 defender.groggy_meter = 0
+                                defender.daze_cooldown_turns = max(int(getattr(defender, "daze_cooldown_turns", 0) or 0), int(TUNING_DAZE_COOLDOWN_TURNS))
                             except Exception:
                                 pass
             except Exception:
@@ -3084,10 +3122,10 @@ class WrestleApp(App):
         # choose between Pump (+1) and Adrenaline (+2).
         # Kept probabilistic so CPU doesn't always auto-buy.
 
-        if int(self.cpu.hype) >= 30 and int(self.cpu.grit) <= 1 and random.random() < 0.35:
-            self.cpu.hype -= 30
+        if int(self.cpu.hype) >= int(TUNING_HYPE_SHOP_GRIT_REFILL_COST) and int(self.cpu.grit) <= 1 and random.random() < 0.35:
+            self.cpu.hype -= int(TUNING_HYPE_SHOP_GRIT_REFILL_COST)
             before = int(self.cpu.grit)
-            self.cpu.grit = min(self.cpu.max_grit, int(self.cpu.grit) + 4)
+            self.cpu.grit = min(self.cpu.max_grit, int(self.cpu.grit) + int(TUNING_HYPE_SHOP_GRIT_REFILL_AMOUNT))
             gained = int(self.cpu.grit) - before
             self._log(f"{self._fmt_name(self.cpu)} rallies! (+{gained} Grit)")
             return
@@ -3200,6 +3238,15 @@ class WrestleApp(App):
             bonus = int(type_bonus_for(name, mv))
             score = float(dmg + manual + bonus)
 
+            # Anti-turtle: Defensive should be situational, not a default action.
+            try:
+                if str(name) == MOVE_DEFENSIVE:
+                    score -= float(CPU_DEFENSIVE_BASE_PENALTY)
+                    if float(self.cpu.hp_pct()) <= float(CPU_DEFENSIVE_EMERGENCY_HP_PCT) or int(self.cpu.grit) <= 1:
+                        score += float(CPU_DEFENSIVE_EMERGENCY_BONUS)
+            except Exception:
+                pass
+
             # Grounded realism: prioritize standing up when healthy.
             try:
                 cpu_state = getattr(self.cpu, "state", None)
@@ -3246,7 +3293,8 @@ class WrestleApp(App):
         if mode == "BAD":
             tail = ordered[max(0, len(ordered) - 3) :]
             return random.choice(tail or ordered)
-        return random.choice(ordered)
+        top_n = max(1, min(int(CPU_RND_PICK_FROM_TOP_N), len(ordered)))
+        return random.choice(ordered[:top_n])
 
     def _cpu_choose_cards(self, move_name, *, mode: str | None = None):
         if str(move_name) == MOVE_REST:
@@ -3943,13 +3991,13 @@ class WrestleApp(App):
                 self._update_control_bar()
 
             def buy_grit_refill(_inst=None) -> None:
-                if self.player.hype < 30:
+                if int(self.player.hype) < int(TUNING_HYPE_SHOP_GRIT_REFILL_COST):
                     return
                 if int(self.player.grit) >= int(self.player.max_grit):
                     return
-                self.player.hype -= 30
+                self.player.hype -= int(TUNING_HYPE_SHOP_GRIT_REFILL_COST)
                 before = int(self.player.grit)
-                self.player.grit = min(self.player.max_grit, int(self.player.grit) + 4)
+                self.player.grit = min(self.player.max_grit, int(self.player.grit) + int(TUNING_HYPE_SHOP_GRIT_REFILL_AMOUNT))
                 gained = int(self.player.grit) - before
                 self._log(f"Hype Shop: Grit Refill! (+{gained} Grit)")
                 self._update_hud()
@@ -3971,12 +4019,12 @@ class WrestleApp(App):
             b1 = BorderedButton(text="Pump Up\n(25 Hype): Next card +1", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
             b2 = BorderedButton(text="Adrenaline\n(50 Hype): Next card +2", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
             b_edge = BorderedButton(text="Lock Up Edge\n(50 Hype): Auto-win next Lock Up", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
-            b_grit = BorderedButton(text="Grit Refill\n(30 Hype): +4 Grit", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
+            b_grit = BorderedButton(text=f"Grit Refill\n({int(TUNING_HYPE_SHOP_GRIT_REFILL_COST)} Hype): +{int(TUNING_HYPE_SHOP_GRIT_REFILL_AMOUNT)} Grit", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
             b3 = BorderedButton(text="Second Wind\n(80 Hype): Heal 15 HP", size_hint_y=None, height=BTN_HEIGHT_SHOP, background_normal="", background_color=COLOR_BTN_BASE)
             b1.disabled = self.player.hype < 25
             b2.disabled = self.player.hype < 50
             b_edge.disabled = (self.player.hype < 50) or bool(getattr(self.player, "lockup_edge_ready", False))
-            b_grit.disabled = (self.player.hype < 30) or (int(self.player.grit) >= int(self.player.max_grit))
+            b_grit.disabled = (int(self.player.hype) < int(TUNING_HYPE_SHOP_GRIT_REFILL_COST)) or (int(self.player.grit) >= int(self.player.max_grit))
             b3.disabled = self.player.hype < 80
             b1.bind(on_release=buy_pump)
             b2.bind(on_release=buy_adrenaline)
@@ -4239,6 +4287,7 @@ class WrestleApp(App):
                 winner.daze_turns = 0
                 winner.is_groggy = False
                 winner.groggy_meter = 0
+                winner.daze_cooldown_turns = max(int(getattr(winner, "daze_cooldown_turns", 0) or 0), int(TUNING_DAZE_COOLDOWN_TURNS))
         except Exception:
             pass
 
