@@ -50,69 +50,70 @@ MOVE_REGAIN_BALANCE = "util_regain_balance"
 # ==========================================
 #  🎨 THEME & TUNING (Tinker Here!)
 # ==========================================
+# ==========================================
+#  🎨 FINAL 16-BIT ARCADE PALETTE (Unified)
+# ==========================================
 
-# COLORS (R, G, B, A) - 0.0 to 1.0
-COLOR_BG_MAIN   = (0.06, 0.06, 0.06, 1)   # Almost Black
-COLOR_BTN_BASE  = (0.15, 0.15, 0.15, 1)   # Dark Grey Buttons
-COLOR_TEXT_MAIN = (1, 1, 1, 1)            # White Text
+# Atmosphere
+COLOR_BG_MAIN   = (0.27, 0.35, 0.47, 1.0)   # Deep Arcade Blue-Black
+COLOR_BTN_BASE  = (0.37, 0.45, 0.57, 1.0)   # Dark Grey-Blue
+COLOR_TEXT_MAIN = (1.00, 1.00, 0.00, 1)   # Retro Yellow Text
 
-# Common text tones
-COLOR_TEXT_SOFT = (0.90, 0.90, 0.90, 1)
-COLOR_TEXT_HINT = (0.75, 0.75, 0.75, 1)
-COLOR_TEXT_MUTED = (0.72, 0.72, 0.72, 1)
-COLOR_TEXT_PROMPT = (0.95, 0.95, 0.95, 1)
+# Common text tones (Matching the high-contrast vibe)
+COLOR_TEXT_SOFT   = (0.95, 0.95, 0.95, 1) # Clean white
+COLOR_TEXT_HINT   = (0.00, 1.00, 1.00, 1) # Cyber Cyan hints
+COLOR_TEXT_MUTED  = (0.60, 0.60, 0.70, 1) # Desaturated Blue-Grey
+COLOR_TEXT_PROMPT = (1.00, 1.00, 1.00, 1) # Bright white
 
-# Accent + HUD
-COLOR_LOG_TEXT = (0.8, 1, 0.8, 1)
-COLOR_HP_PLAYER = (0.25, 1, 0.25, 1)
-COLOR_HP_CPU = (1, 0.25, 0.25, 1)
+# Accent + HUD (Floating Point)
+COLOR_LOG_TEXT  = (0.00, 1.00, 0.00, 1)   # Pure Neon Green
+COLOR_HP_PLAYER = (0.00, 1.00, 1.00, 1)   # Cyber Cyan (matches Hype)
+COLOR_HP_CPU    = (1.00, 0.00, 1.00, 1)   # Neon Magenta (matches Grit)
 
-# Kivy markup + bar colors
-COLOR_HEX_GRIT = "bb86fc"
-COLOR_HEX_HYPE = "ff9800"
+# Match Accents (Hex)
+COLOR_HEX_GRIT = "FF00FF"                 # Neon Magenta
+COLOR_HEX_HYPE = "00FFFF"                 # Cyber Cyan
 
 # Momentum (player advantage): -5..+5
-COLOR_HEX_MOMENTUM_POS = "00c853"
-COLOR_HEX_MOMENTUM_NEG = "ff5555"
-COLOR_HEX_MOMENTUM_NEU = "bbbbbb"
+COLOR_HEX_MOMENTUM_POS = "00FFFF"         # Player Cyan
+COLOR_HEX_MOMENTUM_NEG = "FF00FF"         # CPU Magenta
+COLOR_HEX_MOMENTUM_NEU = "555555"         # Neutral Grey
 
 # Control bar accents
-COLOR_HEX_RETURN = "#6200ea"
-COLOR_HEX_PLAY_ENABLED = "#00c853"
-COLOR_HEX_PLAY_DISABLED = "#444444"
+COLOR_HEX_RETURN = "#9900FF"              # Arcade Purple
+COLOR_HEX_PLAY_ENABLED = "00FF00"         # Pure Green
+COLOR_HEX_PLAY_DISABLED = "333333"        # Dim Grey
 
 # Markup/log colors (hex)
-COLOR_HEX_NAME_YOU = "55ff55"
-COLOR_HEX_NAME_CPU = "55ffff"
-COLOR_HEX_DAMAGE = "ff5555"
-COLOR_HEX_STRIKE_LOG = "ff5555"
-COLOR_HEX_GRAPPLE_LOG = "55aaff"
-COLOR_HEX_SETUP_LOG = "cccccc"
-COLOR_HEX_DEFENSIVE_LOG = "bbbbbb"
+COLOR_HEX_NAME_YOU = "00FFFF"             # Cyber Cyan
+COLOR_HEX_NAME_CPU = "FF00FF"             # Neon Magenta
+COLOR_HEX_DAMAGE = "FF0000"               # Pure Red
+COLOR_HEX_STRIKE_LOG = "FF3333"           # Bright Crimson
+COLOR_HEX_GRAPPLE_LOG = "3333FF"          # Bright Blue
+COLOR_HEX_SETUP_LOG = "FFFF00"            # Classic Yellow
+COLOR_HEX_DEFENSIVE_LOG = "AAAAAA"        # Silver
 
 # HP status colors (Fog of War)
-COLOR_HEX_HP_OPTIMAL = "55ff55"
-COLOR_HEX_HP_STABLE = "b9ff3b"
-COLOR_HEX_HP_STRAINED = "ffff55"
-COLOR_HEX_HP_EXHAUSTED = "ffb055"
-COLOR_HEX_HP_CRITICAL = "ff5555"
+COLOR_HEX_HP_OPTIMAL   = "00FF00"         # Pure Green
+COLOR_HEX_HP_STABLE    = "ADFF2F"         # Green-Yellow
+COLOR_HEX_HP_STRAINED  = "FFFF00"         # Pure Yellow
+COLOR_HEX_HP_EXHAUSTED = "FF8C00"         # Dark Orange
+COLOR_HEX_HP_CRITICAL  = "FF0000"         # Pure Red
 
-# TYPE COLORS (Used for button hints)
-COLOR_STRIKE    = (0.40, 0.05, 0.05, 1)   # Dark Red
-COLOR_GRAPPLE   = (0.05, 0.05, 0.40, 1)   # Dark Blue
-COLOR_AERIAL    = (0.40, 0.40, 0.05, 1)   # Dark Yellow
-COLOR_SUBMIT    = (0.05, 0.40, 0.05, 1)   # Dark Green
-
-COLOR_DEFENSIVE = (0.10, 0.10, 0.10, 1)
-COLOR_FINISHER = (0.83, 0.69, 0.22, 1)
-
-COLOR_HYPE_SHOP = (0.28, 0.17, 0.0, 1)
+# --- Refined 16-Bit Arcade (Physical Button feel) ---
+COLOR_STRIKE    = (0.70, 0.05, 0.05, 1)   # Deep Punchy Red
+COLOR_GRAPPLE   = (0.05, 0.20, 0.70, 1)   # Power Blue
+COLOR_AERIAL    = (0.00, 0.65, 0.15, 1)   # Emerald Green (No Teal!)
+COLOR_SUBMIT    = (0.50, 0.00, 0.70, 1)   # Royal Purple
+COLOR_DEFENSIVE = (0.20, 0.20, 0.25, 1)   # Dark Steel
+COLOR_FINISHER  = (1.00, 0.84, 0.00, 1)   # Championship Gold
+COLOR_HYPE_SHOP = (0.40, 0.20, 0.00, 1)   # Deep Bronze
 
 # Combo-chain highlight (gold)
-COLOR_CHAIN = (0.92, 0.74, 0.18, 1)
+COLOR_CHAIN = (1.00, 1.00, 0.00, 1)       # Flashing Yellow
 
-# Card selection highlight (avoid using green; it conflicts with HP/log accents)
-COLOR_CARD_SELECTED = (1.00, 0.20, 0.75, 1)
+# Card selection highlight
+COLOR_CARD_SELECTED = (1.00, 0.00, 1.00, 1) # Neon Magenta
 
 # ==========================================
 #  🎛️ TUNING KNOBS
@@ -267,7 +268,7 @@ ARENA_MOVES_PCT = 0.55
 
 # Button sizing
 BTN_HEIGHT_CATEGORY = dp(56)
-BTN_HEIGHT_MOVE = dp(72)
+BTN_HEIGHT_MOVE = dp(50)
 BTN_HEIGHT_SHOP = dp(72)
 
 # Spacing/padding (optional convenience)
@@ -3866,7 +3867,7 @@ class WrestleApp(App):
             if t == "Submission":
                 return COLOR_SUBMIT
             if t == "Aerial":
-                return COLOR_SUBMIT
+                return COLOR_AERIAL
             if t == "Defensive":
                 return COLOR_DEFENSIVE
             return COLOR_BTN_BASE
@@ -4018,7 +4019,7 @@ class WrestleApp(App):
                 elif key == "GRAPPLES":
                     bg = COLOR_GRAPPLE
                 elif key == "AERIAL_RUNNING":
-                    bg = COLOR_SUBMIT
+                    bg = COLOR_AERIAL
                 elif key == "HYPE_SHOP":
                     bg = COLOR_HYPE_SHOP
                 else:
@@ -4602,7 +4603,7 @@ class WrestleApp(App):
             if not self.selected_move:
                 self.hint_label.text = "Pick a move."
             elif self.selected_move == MOVE_DEFENSIVE:
-                self.hint_label.text = "Defensive: discard 0–2 cards (≤5)."
+                self.hint_label.text = "Defensive: discard 0–2 cards (≤5). If you discard doubles, your block gets [b]+5[/b]."
             elif self.selected_move == MOVE_REST:
                 self.hint_label.text = "Rest: no cards needed. Press PLAY."
             elif self.selected_move == MOVE_GROGGY_RECOVERY:

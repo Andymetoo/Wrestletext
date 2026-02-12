@@ -11,9 +11,9 @@ from __future__ import annotations
 
 ROSTER: dict[str, dict] = {
     # NOTE: Roster keys are slugs (stable IDs). Displayed names live in profile fields.
-    "mr_user": {
-        "name": "Mr. User",
-        "short_name": "User",
+    "tre_legitimate": {
+        "name": "Tre Legitimate",
+        "short_name": "Tre",
         "archetype": "BALANCED",
         "weight_class": "Heavy",
         "style": "Balanced",
@@ -70,9 +70,9 @@ ROSTER: dict[str, dict] = {
             "grap_superplex",
         ],
     },
-    "johnny_cpu": {
-        "name": "Johnny CPU",
-        "short_name": "CPU",
+    "don_burner": {
+        "name": "Don Burner, Head Turner",
+        "short_name": "Don Burner",
         "archetype": "BALANCED",
         "weight_class": "Heavy",
         "style": "Brawler",
@@ -123,9 +123,9 @@ ROSTER: dict[str, dict] = {
             "sub_submission_hold",
         ],
     },
-    "technical_tim": {
-        "name": "Technical Tim",
-        "short_name": "Tim",
+    "ivan_mindset": {
+        "name": "Ivan Mindset",
+        "short_name": "Ivan",
         "archetype": "BALANCED",
         "weight_class": "Cruiser",
         "style": "Technician",
@@ -475,5 +475,5 @@ ROSTER: dict[str, dict] = {
     },
 }
 
-DEFAULT_PLAYER_PROFILE = "mr_user"
-DEFAULT_CPU_PROFILE = "johnny_cpu"
+DEFAULT_PLAYER_PROFILE = "tre_legitimate"
+DEFAULT_CPU_PROFILE = "don_burner"
