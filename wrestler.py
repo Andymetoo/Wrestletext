@@ -216,6 +216,11 @@ class Wrestler:
     # Pin anti-spam: pin escape threshold multiplier (smaller => easier to escape pins).
     pin_escape_threshold_mult: float = 1.0
 
+    # Knockdown threshold (used by strike-based knockdowns):
+    # at 100% HP, require knockdown_thresh_max damage; at 0% HP, require knockdown_thresh_min.
+    knockdown_thresh_min: int = 5
+    knockdown_thresh_max: int = 15
+
     # Card system
     deck: Deck | None = None
     hand: list[Card] | None = None
@@ -257,6 +262,28 @@ class Wrestler:
                     self.finisher = str(prof_finisher)
             except Exception:
                 pass
+
+            # Per-wrestler knockdown thresholds (optional).
+            try:
+                mn = self.profile.get("knockdown_thresh_min")
+                if mn is not None:
+                    self.knockdown_thresh_min = int(mn)
+            except Exception:
+                pass
+            try:
+                mx = self.profile.get("knockdown_thresh_max")
+                if mx is not None:
+                    self.knockdown_thresh_max = int(mx)
+            except Exception:
+                pass
+
+        # Sanity clamps.
+        try:
+            self.knockdown_thresh_min = max(1, int(self.knockdown_thresh_min))
+            self.knockdown_thresh_max = max(int(self.knockdown_thresh_min), int(self.knockdown_thresh_max))
+        except Exception:
+            self.knockdown_thresh_min = 5
+            self.knockdown_thresh_max = 15
 
         # Ensure baseline moves are always available (when using movesets).
         if self.moveset is not None:

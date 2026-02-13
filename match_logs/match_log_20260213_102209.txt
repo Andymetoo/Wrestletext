@@ -1,0 +1,193 @@
+WrestleText Match Log
+Started: 2026-02-13 10:08:35.853212
+YOU vs CPU
+
+> ────────────────────────
+> Score: YOU 10+dbl0+col0+bon0+mod0+chain0+mom0-stale0=10 | CPU 1+dbl0+col1+bon0+mod0+chain0+mom0-stale0=2
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Haymaker (2), but "Malice" Anderson beats them to it with Front Kick (10) (Cards: 10)!
+> "Malice" Anderson uses Front Kick! A stiff kick to the midsection doubles Don Burner, Head Turner over!
+> Don Burner, Head Turner takes 11 dmg (Critical hit).
+> Don Burner, Head Turner is DAZED! (CRITICAL)
+> Two-card play: must match value (doubles) OR match a non-gray color (+2 to high card).
+> Two-card play: must match value (doubles) OR match a non-gray color (+2 to high card).
+> CPU wins the lock up and takes control!
+> ────────────────────────
+> Score: YOU 9+dbl5+col1+bon0+mod0+chain0+mom1-stale0=16 | CPU 2+dbl0+col1+bon0+mod0+chain0+mom0-stale0=3
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Snap Suplex (3), but "Malice" Anderson beats them to it with Bite (16) (Cards: 9, 9)!
+> BREAK! "Malice" Anderson cracks Don Burner, Head Turner and slips free of the hold!
+> "Malice" Anderson uses Bite! You sink your teeth in! Dirty but effective!
+> Doubles hit! Damage boosted.
+> Don Burner, Head Turner takes 15 dmg (Critical hit).
+> ────────────────────────
+>  Don Burner, Head Turner repeats Haymaker (-3).
+> Score: YOU TECH11:10+dbl0+col0+bon0+mod0+chain0+mom1-stale0=11 | CPU 3+dbl5+col1+bon0+mod0+chain0+mom0-stale3=6
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Haymaker (6), but "Malice" Anderson beats them to it with Charge (11) (Cards: 1)!
+> "Malice" Anderson: Passive Regen (+2 Grit).
+> "Malice" Anderson uses Charge! You build speed—charging in!
+> ────────────────────────
+> Score: YOU 10+dbl0+col0+bon0+mod0+chain0+mom1-stale0=11 | CPU TECH11:4+dbl0+col0+bon0+mod0+chain0+mom0-stale0=6
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Charge (6), but "Malice" Anderson beats them to it with Running Big Boot (11) (Cards: 10)!
+> "Malice" Anderson uses Running Big Boot! Charging in—BIG BOOT! Right to the chest!
+> Don Burner, Head Turner takes 11 dmg (Clean hit).
+> Don Burner, Head Turner stays on their feet!
+> ────────────────────────
+>  Don Burner, Head Turner repeats Haymaker (-3).
+> Score: YOU TECH11:10+dbl0+col1+bon0+mod0+chain0+mom1-stale0=12 | CPU 10+dbl0+col1+bon0+mod0+chain0+mom0-stale3=8
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Haymaker (8), but "Malice" Anderson beats them to it with Light Jab (12) (Cards: 1)!
+> "Malice" Anderson: Passive Regen (+2 Grit).
+> "Malice" Anderson uses Light Jab! A quick touch—just enough to keep Don Burner, Head Turner honest.
+> Don Burner, Head Turner takes 3 dmg (Clean hit).
+> You win the lock up and take control!
+> ────────────────────────
+> Score: YOU TECH11:7+dbl0+col0+bon0+mod0+chain0+mom2-stale0=9 | CPU 0+chain0+mom0-stale0=0
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Rest (0), but "Malice" Anderson beats them to it with Irish Whip (9) (Cards: 4)!
+> "Malice" Anderson uses Irish Whip! Sends Don Burner, Head Turner to the ropes with an Irish Whip!
+> ────────────────────────
+> Score: YOU TECH11:10+dbl0+col0+bon0+mod0+chain0+mom2-stale0=12 | CPU TECH11:10+dbl0+col0+bon0+mod0+chain0+mom0-stale0=10
+> Simultaneous Action! Both wrestlers focus on their strategy.
+> "Malice" Anderson: Passive Regen (+2 Grit).
+> Don Burner, Head Turner: Passive Regen (+2 Grit).
+> "Malice" Anderson uses Charge! You build speed—charging in!
+> Don Burner, Head Turner uses Regain Balance! Don Burner, Head Turner grab the ropes and steady Don Burner, Head Turner'sself!
+> ────────────────────────
+> Score: YOU 8+dbl0+col0+bon0+mod0+chain0+mom2-stale0=10 | CPU TECH11:7+dbl0+col0+bon0+mod0+chain0+mom0-stale0=7
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Charge (7), but "Malice" Anderson beats them to it with Rebound Lariat (10) (Cards: 8)!
+> Don Burner, Head Turner: Passive Regen (+2 Grit).
+> "Malice" Anderson uses Rebound Lariat! Off the ropes... REBOUND LARIAT!
+> Don Burner, Head Turner takes 7 dmg (Glancing blow).
+> Don Burner, Head Turner stays on their feet!
+> ────────────────────────
+> Score: YOU 7+dbl0+col0+bon0+mod0+chain0+mom2-stale0=9 | CPU 0+chain0+mom0-stale0=0
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Rest (0), but "Malice" Anderson beats them to it with Running Clothesline (9) (Cards: 7)!
+> "Malice" Anderson uses Running Clothesline! Full sprint—RUNNING CLOTHESLINE!
+> Don Burner, Head Turner takes 18 dmg (Critical hit).
+> Don Burner, Head Turner is DAZED! (CRITICAL)
+> ────────────────────────
+> Score: YOU 7+dbl0+col1+bon0+mod0+chain0+mom2-stale0=10 | CPU 5+dbl0+col0+bon0+mod-4+chain0+mom0-stale0=1
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Groggy Recovery (1), but "Malice" Anderson beats them to it with Submission Hold (10) (Cards: 7)!
+> Don Burner, Head Turner: Passive Regen (+2 Grit).
+> "Malice" Anderson uses Submission Hold! You cinch it in deep—nowhere to go!
+> "Malice" Anderson attempts a submission!
+> Stunned... (Groggy: 15 left)
+> Escape attempt: Don Burner, Head Turner discards 10 (total 10/17)
+> "Malice" Anderson cranks it! Don Burner, Head Turner takes 5 dmg.
+> Escape attempt: Don Burner, Head Turner discards 8 (total 18/17)
+> Don Burner, Head Turner escapes the submission attempt!
+> Hype Shop: Grit Refill! (+3 Grit)
+> ────────────────────────
+> Score: YOU TECH11:10+dbl0+col1+bon0+mod0+chain0+mom2-stale0=13 | CPU 6+dbl0+col0+bon0+mod-4+chain0+mom0-stale0=2
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Groggy Recovery (2), but "Malice" Anderson beats them to it with Jab (13) (Cards: 1)!
+> "Malice" Anderson uses Jab! A quick jab snaps Don Burner, Head Turner's head back!
+> Don Burner, Head Turner takes 8 dmg (Critical hit).
+> Stunned... (Groggy: 9 left)
+> ────────────────────────
+> Score: YOU 9+dbl0+col0+bon0+mod0+chain0+mom2-stale0=11 | CPU 2+dbl0+col0+bon0+mod-4+chain0+mom0-stale0=-2
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Groggy Recovery (0), but "Malice" Anderson beats them to it with Double Leg Takedown (11) (Cards: 9)!
+> Don Burner, Head Turner: Passive Regen (+2 Grit).
+> "Malice" Anderson uses Double Leg Takedown! Shoots in low—DOUBLE LEG!
+> Stunned... (Groggy: 7 left)
+> ────────────────────────
+>  "Malice" Anderson repeats Submission Hold (-3).
+> Score: YOU 5+dbl5+col0+bon0+mod0+chain0+mom2-stale3=9 | CPU 5+dbl0+col0+bon0+mod-4+chain0+mom0-stale0=1
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Groggy Recovery (1), but "Malice" Anderson beats them to it with Submission Hold (9) (Cards: 5, 5)!
+> "Malice" Anderson: Passive Regen (+2 Grit).
+> Don Burner, Head Turner: Passive Regen (+2 Grit).
+> "Malice" Anderson uses Submission Hold! You cinch it in deep—nowhere to go!
+> "Malice" Anderson attempts a submission!
+> Stunned... (Groggy: 2 left)
+> Escape attempt: Don Burner, Head Turner discards 8 (total 8/20)
+> "Malice" Anderson cranks it! Don Burner, Head Turner takes 5 dmg.
+> Escape attempt: Don Burner, Head Turner discards 7 (total 15/20)
+> "Malice" Anderson cranks it! Don Burner, Head Turner takes 4 dmg.
+> Escape attempt: Don Burner, Head Turner discards 6 (total 21/20)
+> Don Burner, Head Turner escapes the submission attempt!
+> ────────────────────────
+>  "Malice" Anderson repeats Double Leg Takedown (-3).
+> Score: YOU 10+dbl0+col1+bon0+mod0+chain0+mom2-stale3=10 | CPU 3+dbl0+col0+bon0+mod-4+chain0+mom0-stale0=-1
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Groggy Recovery (0), but "Malice" Anderson beats them to it with Double Leg Takedown (10) (Cards: 8, 10)!
+> Don Burner, Head Turner: Passive Regen (+1 Grit).
+> "Malice" Anderson uses Double Leg Takedown! Shoots in low—DOUBLE LEG!
+> Don Burner, Head Turner shakes off the stun!
+> ────────────────────────
+> Score: YOU TECH11:8+dbl0+col0+bon0+mod0+chain0+mom2-stale0=10 | CPU TECH11:7+dbl0+col0+bon0+mod0+chain0+mom0-stale0=7
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Slow Stand Up (7), but "Malice" Anderson beats them to it with Grounded Punch (10) (Cards: 3)!
+> "Malice" Anderson: Passive Regen (+2 Grit).
+> Don Burner, Head Turner: Passive Regen (+1 Grit).
+> "Malice" Anderson uses Grounded Punch! A quick shot while they’re down—nothing fancy, just mean.
+> Don Burner, Head Turner takes 4 dmg (Glancing blow).
+> ────────────────────────
+> Score: YOU 10+dbl0+col1+bon0+mod0+chain0+mom2-stale0=13 | CPU 5+dbl0+col0+bon0+mod0+chain0+mom0-stale0=5
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Upkick (5), but "Malice" Anderson beats them to it with Pin (13) (Cards: 10)!
+> "Malice" Anderson uses Pin! Hooks the leg! Going for the cover!
+> "Malice" Anderson attempts a pinfall!
+> ONE! Don Burner, Head Turner fights out using a 10. (total 10/23)
+> TWO! Don Burner, Head Turner kicks out using a 9. (total 19/23)
+> THREE...?! Don Burner, Head Turner strains with a 6. (total 25/23)
+> JUST IN TIME! Don Burner, Head Turner escapes!
+> You win the lock up and take control!
+> Two-card play: must match value (doubles) OR match a non-gray color (+2 to high card).
+> ────────────────────────
+> Score: YOU TECH11:9+dbl0+col0+bon0+mod0+chain0+mom2-stale0=11 | CPU TECH11:5+dbl0+col0+bon0+mod0+chain0+mom0-stale0=5
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Fight For Control (5), but "Malice" Anderson beats them to it with Grapple Elbow (11) (Cards: 2)!
+> "Malice" Anderson: Passive Regen (+2 Grit).
+> "Malice" Anderson uses Grapple Elbow! Short elbow in the clinch—tight and nasty.
+> Don Burner, Head Turner takes 3 dmg (Clean hit).
+> FIRE UP! "Malice" Anderson ignites (3 turns): +2 to each card, no botches, wins ties.
+> ────────────────────────
+> Score: YOU 6+dbl5+col0+bon4+mod0+chain0+mom0-stale0=15 | CPU TECH11:2+dbl0+col0+bon0+mod0+chain0+mom0-stale0=2
+> "Malice" Anderson wins the clash! Don Burner, Head Turner was going for Fight For Control (2), but "Malice" Anderson beats them to it with Taunt (15) (Cards: 6, 6)!
+> "Malice" Anderson uses Taunt! You showboat to the crowd and fire up!
+> "Malice" Anderson gets fired up! (+45 Hype)
+> Hype Shop: Grit Refill! (+3 Grit)
+> ────────────────────────
+> Score: YOU 0+chain0+mom0-stale0=0 | CPU TECH11:10+dbl0+col0+bon0+mod0+chain0+mom0-stale0=10
+> Don Burner, Head Turner wins the clash! "Malice" Anderson was going for Rest (0), but Don Burner, Head Turner beats them to it with Gut Punch (10) (Cards: 1)! 
+> Don Burner, Head Turner: Passive Regen (+1 Grit).
+> BREAK! Don Burner, Head Turner cracks "Malice" Anderson and slips free of the hold!
+> Don Burner, Head Turner uses Gut Punch! Short strike to the gut to create space!
+> "Malice" Anderson takes 3 dmg (Critical hit).
+> "Malice" Anderson is DAZED! (CRITICAL)
+> FIRE UP! Don Burner, Head Turner ignites (1 turns): +2 to each card, no botches, wins ties.
+> Pick a move first (category → move), then select your card(s).
+> ────────────────────────
+> Score: YOU 7+dbl0+col0+bon2+mod-4+chain0+mom0-stale0=5 | CPU TECH11:8+dbl0+col0+bon2+mod0+chain0+mom0-stale0=10
+> Don Burner, Head Turner wins the clash! "Malice" Anderson was going for Groggy Recovery (5), but Don Burner, Head Turner beats them to it with Light Kick (10) (Cards: 3)! 
+> Don Burner, Head Turner: Passive Regen (+1 Grit).
+> Don Burner, Head Turner uses Light Kick! A light kick to keep the pressure on.
+> "Malice" Anderson takes 3 dmg (Clean hit).
+> Stunned... (Groggy: 3 left)
+> ────────────────────────
+> Score: YOU 3+dbl0+col0+bon0+mod-4+chain0+mom0-stale0=-1 | CPU TECH11:7+dbl0+col0+bon0+mod0+chain0+mom1-stale0=8
+> Simultaneous Action! Both wrestlers focus on their strategy.
+> "Malice" Anderson: Passive Regen (+2 Grit).
+> "Malice" Anderson uses Groggy Recovery! You shake off the cobwebs...
+> Don Burner, Head Turner uses Charge! Don Burner, Head Turner build speed—charging in!
+> "Malice" Anderson shakes off the stun!
+> ────────────────────────
+> Score: YOU TECH11:8+dbl0+col0+bon0+mod0+chain0+mom0-stale0=8 | CPU 0+chain0+mom1-stale0=1
+> Simultaneous Action! Both wrestlers focus on their strategy.
+> "Malice" Anderson: Passive Regen (+2 Grit).
+> "Malice" Anderson uses Charge! You build speed—charging in!
+> Don Burner, Head Turner uses Rest! Don Burner, Head Turner create space and breathe...
+> Don Burner, Head Turner recovers (+0 Grit).
+> ────────────────────────
+> Score: YOU TECH11:9+dbl0+col0+bon0+mod0+chain0+mom0-stale0=9 | CPU 0+chain0+mom1-stale0=1
+> Simultaneous Action! Both wrestlers focus on their strategy.
+> "Malice" Anderson uses Stop Short! You put on the brakes and reset your stance!
+> Don Burner, Head Turner uses Rest! Don Burner, Head Turner create space and breathe...
+> Don Burner, Head Turner recovers (+0 Grit).
+> ────────────────────────
+> Score: YOU 0+chain0+mom0-stale0=0 | CPU 0+chain0+mom1-stale0=1
+> Simultaneous Action! Both wrestlers focus on their strategy.
+> "Malice" Anderson: Passive Regen (+2 Grit).
+> "Malice" Anderson uses Rest! You create space and breathe...
+> "Malice" Anderson recovers (+3 Grit).
+> Don Burner, Head Turner uses Rest! Don Burner, Head Turner create space and breathe...
+> Don Burner, Head Turner recovers (+0 Grit).
+> ────────────────────────
+> Score: YOU 8+dbl0+col0+bon0+mod0+chain0+mom0-stale0=10 | CPU 0+chain0+mom1-stale0=1
+> Simultaneous Action! Both wrestlers focus on their strategy.
+> "Malice" Anderson uses Taunt! You showboat to the crowd and fire up!
+> "Malice" Anderson gets fired up! (+45 Hype)
+> Don Burner, Head Turner uses Rest! Don Burner, Head Turner create space and breathe...
+> Don Burner, Head Turner recovers (+0 Grit).
