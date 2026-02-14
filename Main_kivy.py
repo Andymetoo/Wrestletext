@@ -3837,6 +3837,16 @@ class WrestleApp(App):
             if str(getattr(self.cpu, "last_move_name", None) or "") == str(name):
                 score -= 15.0
 
+            # Stale avoidance: don't willingly take the stale clash penalty.
+            try:
+                if self._would_be_stale(self.cpu, str(name)):
+                    # The actual penalty is -STALE_CLASH_SCORE_PENALTY, but taking it
+                    # also tends to widen margin tiers and lose tempo. Treat it as a
+                    # much bigger strategic downside.
+                    score -= float(int(STALE_CLASH_SCORE_PENALTY)) * 8.0
+            except Exception:
+                pass
+
             # Fuzzing noise to avoid deterministic "robot" behavior
             score += float(random.randint(0, 4))
             return score
@@ -3949,30 +3959,32 @@ class WrestleApp(App):
             if not candidates:
                 return []
 
-            # Score candidates using the actual clash scoring rules.
-            scored: list[dict] = []
-            for d in candidates:
-                cs = list(d.get("cards") or [])
-                # Defensive uses a separate pool rule.
-                if str(move_name) == MOVE_DEFENSIVE:
-                    pool = sum(int(c.value) for c in cs)
-                    if len(cs) == 2 and int(cs[0].value) == int(cs[1].value):
-                        pool += 5
-                    pool += int(fired_bonus) * int(len(cs))
-                    d["score"] = int(pool)
-                elif str(move_name) == MOVE_GROGGY_RECOVERY:
-                    # Groggy progress is effectively based on card value; keep it simple.
-                    pool = sum(min(7, int(c.value)) for c in cs)
-                    if len(cs) == 2 and int(cs[0].value) == int(cs[1].value):
-                        pool += 5
-                    pool += int(fired_bonus) * int(len(cs))
-                    d["score"] = int(pool)
-                else:
-                    bonus = int(getattr(self.cpu, "next_card_bonus", 0) or 0) + int(fired_bonus) * int(len(cs))
-                    d["score"] = int(self._calc_clash_score(str(move_name), cs, card_bonus=int(bonus)))
-                scored.append(d)
+        # Score candidates using the actual clash scoring rules.
+        scored: list[dict] = []
+        for d in candidates:
+            cs = list(d.get("cards") or [])
+            card_bonus = int(getattr(self.cpu, "next_card_bonus", 0) or 0) + int(fired_bonus) * int(len(cs))
 
-            candidates = scored
+            # Defensive uses a separate pool rule.
+            if str(move_name) == MOVE_DEFENSIVE:
+                pool = sum(int(c.value) for c in cs)
+                if len(cs) == 2 and int(cs[0].value) == int(cs[1].value):
+                    pool += 5
+                pool += int(card_bonus)
+                d["score"] = int(pool)
+            elif str(move_name) == MOVE_GROGGY_RECOVERY:
+                # Groggy progress is effectively based on card value; keep it simple.
+                pool = sum(min(7, int(c.value)) for c in cs)
+                if len(cs) == 2 and int(cs[0].value) == int(cs[1].value):
+                    pool += 5
+                pool += int(card_bonus)
+                d["score"] = int(pool)
+            else:
+                d["score"] = int(self._calc_clash_score(str(move_name), cs, card_bonus=int(card_bonus)))
+
+            scored.append(d)
+
+        candidates = scored
 
         candidates.sort(key=lambda d: int(d.get("score", 0)), reverse=True)
         mode = str(mode or self._cpu_ai_mode())
