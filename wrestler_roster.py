@@ -172,6 +172,69 @@ ROSTER: dict[str, dict] = {
         ],
     },
 
+    "donovan_kyle": {
+        "name": '"The Extra Mile" Donovan Kyle',
+        "short_name": "Donovan Kyle",
+        "archetype": "SUPERSTAR",
+        "weight_class": "Heavy",
+        "style": "Ace",
+        "finisher": "grap_powerbomb",
+        "ai_traits": {"GREED": 80, "GOOD": 20, "BAD": 0, "RND": 0},
+        "bio": "Doesn't coast, doesn't blink. Presses every edge until you break.",
+        "moveset": [
+            # Neutral / safety
+            "grap_lock_up",
+            "util_taunt",
+            "util_rest",
+            "def_defensive",
+            # Stand-up: efficient + knockout threats
+            "strike_jab",
+            "strike_light_jab",
+            "strike_chop",
+            "strike_front_kick",
+            "strike_haymaker",
+            "strike_spinning_backfist",
+            # Weak grapple: control + damage
+            "util_deepen_hold",
+            "grap_wrist_escape",
+            "grap_fight_for_control",
+            "grap_shove_off",
+            "grap_headlock_takeover",
+            "grap_arm_drag",
+            "grap_snap_suplex",
+            "grap_irish_whip",
+            "grap_headbutt",
+            "strike_grapple_elbow",
+            "strike_knee_to_gut",
+            # Strong grapple: big throws + finish
+            "grap_break_hold",
+            "grap_ddt",
+            "grap_belly_to_belly",
+            "grap_powerbomb",
+            # Running: keeps pressure high
+            "util_charge",
+            "util_stop_short",
+            "util_regain_balance",
+            "strike_running_clothesline",
+            "strike_rebound_lariat",
+            "strike_tree_shaker",
+            "grap_running_bulldog",
+            # Grounded / recovery
+            "util_ground_roll",
+            "util_slow_stand_up",
+            "util_kip_up",
+            "strike_upkick",
+            "strike_stomp",
+            "strike_grounded_punch",
+            "util_pick_up",
+            # Win conditions
+            "pin_pin",
+            "sub_submission_hold",
+            "sub_ankle_lock",
+            "sub_sharpshooter",
+        ],
+    },
+
     # New selectable wrestlers
     "brad_vantage": {
         "name": "Brad Vantage",

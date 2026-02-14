@@ -39,6 +39,10 @@ MOVE_CLIMB_DOWN = "air_climb_down"
 MOVE_PIN = "pin_pin"
 MOVE_DOUBLE_LEG_TAKEDOWN = "grap_double_leg_takedown"
 MOVE_DESPERATION_PUNCH = "strike_desperation_punch"
+MOVE_LIGHT_JAB = "strike_light_jab"
+MOVE_HEADBUTT = "grap_headbutt"
+MOVE_UPKICK = "strike_upkick"
+MOVE_GROUND_ROLL = "util_ground_roll"
 MOVE_BITE = "strike_bite"
 MOVE_FOREARM_CLUB = "strike_forearm_club"
 MOVE_KNEE_TO_GUT = "strike_knee_to_gut"
@@ -2109,9 +2113,15 @@ class WrestleApp(App):
             MOVE_SHOVE_OFF,
             MOVE_SLOW_STAND_UP,
             MOVE_KIP_UP,
+            MOVE_GROUND_ROLL,
             MOVE_CLIMB_DOWN,
             MOVE_STOP_SHORT,
             MOVE_REGAIN_BALANCE,
+            # Universal "cheap kit" per major state (prevents empty move menus).
+            MOVE_LIGHT_JAB,  # STANDING vs STANDING
+            MOVE_HEADBUTT,  # GRAPPLE_WEAK cheap hit
+            MOVE_DESPERATION_PUNCH,  # GRAPPLE_DEFENSE cheap strike
+            MOVE_UPKICK,  # GROUNDED cheap offense vs STANDING
             # Universal running coverage (prevents RUNNING soft-locks).
             MOVE_RUNNING_CLOTHESLINE,
             MOVE_BRACE_CLOTHESLINE,
@@ -3739,6 +3749,302 @@ class WrestleApp(App):
                 return k
         return "RND"
 
+    def _cpu_card_candidates_for_move(self, move_name: str) -> list[dict]:
+        """Generate all affordable CPU card-play candidates for a move.
+
+        Returns a list of dicts: {"cards": [Card...], "score": int}
+        """
+        if str(move_name) == MOVE_REST:
+            return [{"cards": [], "score": 0}]
+
+        hand = list(self.cpu.hand or [])
+        if not hand:
+            # Defensive can legally discard 0.
+            if str(move_name) == MOVE_DEFENSIVE:
+                return [{"cards": [], "score": 0}]
+            return []
+
+        try:
+            fired_bonus = int(TUNING_FIRED_UP_CARD_BONUS_PER_CARD) if int(getattr(self.cpu, "fired_up_turns_remaining", 0) or 0) > 0 else 0
+        except Exception:
+            fired_bonus = 0
+
+        is_finisher = bool(MOVES.get(move_name, {}).get("is_finisher"))
+        move_cost = int(MOVES.get(move_name, {}).get("cost", 0))
+
+        defensive_only_small = (str(move_name) == MOVE_DEFENSIVE)
+        groggy_only_small = (str(move_name) == MOVE_GROGGY_RECOVERY)
+
+        def _passes_small(cs: list) -> bool:
+            if defensive_only_small:
+                return all(int(c.value) <= 5 for c in cs)
+            if groggy_only_small:
+                return all(int(c.value) <= 7 for c in cs)
+            return True
+
+        def _affordable(cs: list) -> bool:
+            try:
+                card_cost = sum(int(c.grit_cost()) for c in cs)
+            except Exception:
+                card_cost = 0
+            return int(self.cpu.grit) >= int(move_cost) + int(card_cost)
+
+        candidates: list[dict] = []
+
+        # Defensive: explicitly allow 0-card discard.
+        if defensive_only_small:
+            candidates.append({"cards": []})
+
+        # Singles
+        if not is_finisher:
+            for c in hand:
+                cs = [c]
+                if not _passes_small(cs):
+                    continue
+                if _affordable(cs):
+                    candidates.append({"cards": cs})
+
+        # Doubles
+        by_val: dict[int, list] = {}
+        for c in hand:
+            by_val.setdefault(int(c.value), []).append(c)
+        for _v, cs in by_val.items():
+            if len(cs) >= 2:
+                pair = [cs[0], cs[1]]
+                if not _passes_small(pair):
+                    continue
+                if _affordable(pair):
+                    candidates.append({"cards": pair})
+
+        # Same-color pairs: enumerate all distinct-value pairs.
+        # (Not allowed for finishers.)
+        if not is_finisher:
+            by_col: dict[str, list] = {}
+            for c in hand:
+                by_col.setdefault(str(c.color), []).append(c)
+            for col, cs in by_col.items():
+                if str(col) == "GRAY":
+                    continue
+                if len(cs) < 2:
+                    continue
+                cs_sorted = sorted(cs, key=lambda x: int(x.value))
+                for i in range(len(cs_sorted)):
+                    for j in range(i + 1, len(cs_sorted)):
+                        a = cs_sorted[i]
+                        b = cs_sorted[j]
+                        if int(a.value) == int(b.value):
+                            # Doubles already covered.
+                            continue
+                        pair = [a, b]
+                        if not _passes_small(pair):
+                            continue
+                        if _affordable(pair):
+                            candidates.append({"cards": pair})
+
+        if not candidates:
+            return []
+
+        # Impact moves: require at least one matching-type (or Yellow) card.
+        if self._move_requires_type_card(move_name) and str(move_name) not in {MOVE_DEFENSIVE, MOVE_GROGGY_RECOVERY}:
+            try:
+                move_type = str(MOVES.get(move_name, {}).get("type", "Setup"))
+                candidates = [d for d in candidates if any(int(c.color_bonus(move_type)) > 0 for c in (d.get("cards") or []))]
+            except Exception:
+                candidates = []
+            if not candidates:
+                return []
+
+        # Score using actual clash scoring rules.
+        scored: list[dict] = []
+        for d in candidates:
+            cs = list(d.get("cards") or [])
+            card_bonus = int(getattr(self.cpu, "next_card_bonus", 0) or 0) + int(fired_bonus) * int(len(cs))
+
+            if str(move_name) == MOVE_DEFENSIVE:
+                pool = sum(int(c.value) for c in cs)
+                if len(cs) == 2 and int(cs[0].value) == int(cs[1].value):
+                    pool += 5
+                pool += int(card_bonus)
+                d["score"] = int(pool)
+            elif str(move_name) == MOVE_GROGGY_RECOVERY:
+                pool = sum(min(7, int(c.value)) for c in cs)
+                if len(cs) == 2 and int(cs[0].value) == int(cs[1].value):
+                    pool += 5
+                pool += int(card_bonus)
+                d["score"] = int(pool)
+            else:
+                # For normal moves, score includes TECH inversion, color/doubles bonuses, etc.
+                d["score"] = int(self._calc_clash_score(str(move_name), cs, card_bonus=int(card_bonus)))
+
+            scored.append(d)
+
+        scored.sort(key=lambda d: int(d.get("score", 0)), reverse=True)
+        return scored
+
+    def _cpu_choose_action(self, *, mode: str | None = None) -> tuple[str, list]:
+        """Choose the CPU's move AND cards together (executable joint optimum)."""
+        mode = str(mode or self._cpu_ai_mode())
+
+        # Groggy override: if groggy recovery is legal, take it.
+        if bool(getattr(self.cpu, "is_groggy", False)):
+            if self._move_is_legal(MOVE_GROGGY_RECOVERY, self.cpu, self.player) and self._passes_moveset(self.cpu, MOVE_GROGGY_RECOVERY):
+                cand = self._cpu_card_candidates_for_move(MOVE_GROGGY_RECOVERY)
+                if cand:
+                    return (MOVE_GROGGY_RECOVERY, list(cand[0].get("cards") or []))
+                return (MOVE_GROGGY_RECOVERY, [])
+
+        valid = self._available_moves(self.cpu, self.player)
+        if not valid:
+            return (MOVE_REST, [])
+
+        # Parity with the player's UI: finishers require doubles.
+        has_doubles = self.cpu.has_doubles_in_hand()
+        filtered = [m for m in valid if not (bool(MOVES.get(m, {}).get("is_finisher")) and (not has_doubles))]
+        if filtered:
+            valid = filtered
+
+        # Impact moves require at least one matching-type (or Yellow) card to be playable.
+        try:
+            filtered = [m for m in valid if self._wrestler_has_type_card_for_move(self.cpu, m)]
+            if filtered:
+                valid = filtered
+        except Exception:
+            pass
+
+        def type_bonus_for(name: str, mv: dict) -> int:
+            # Smart defaults ONLY when ai_score is missing.
+            if "ai_score" in mv:
+                return 0
+
+            raw_damage = int(mv.get("damage", 0))
+            mtype = str(mv.get("type", "Setup"))
+
+            if mtype == "Pin":
+                return 20
+            if mtype == "Submission":
+                return 15
+            if mtype == "Grapple" and raw_damage == 0:
+                return 12
+            if mtype == "Aerial" and raw_damage == 0:
+                return 10
+            if mtype == "Setup":
+                return 5
+            return 0
+
+        def move_value(name: str) -> float:
+            mv = MOVES.get(name, {})
+            dmg = int(mv.get("damage", 0))
+            manual = int(mv.get("ai_score", 0))
+            bonus = int(type_bonus_for(name, mv))
+            score = float(dmg + manual + bonus)
+
+            # Anti-turtle: Defensive should be situational, not a default action.
+            try:
+                if str(name) == MOVE_DEFENSIVE:
+                    score -= float(CPU_DEFENSIVE_BASE_PENALTY)
+                    cd = int(getattr(self.cpu, "defensive_cooldown_turns", 0) or 0)
+                    if cd > 0:
+                        score -= float(CPU_DEFENSIVE_COOLDOWN_SCORE_PENALTY)
+                    if str(getattr(self.cpu, "last_move_name", "") or "") == str(MOVE_DEFENSIVE):
+                        score -= float(CPU_DEFENSIVE_REPEAT_EXTRA_PENALTY)
+                    if float(self.cpu.hp_pct()) <= float(CPU_DEFENSIVE_EMERGENCY_HP_PCT) or int(self.cpu.grit) <= 1:
+                        score += float(CPU_DEFENSIVE_EMERGENCY_BONUS)
+            except Exception:
+                pass
+
+            # Grounded realism: prioritize standing up when healthy.
+            try:
+                cpu_state = getattr(self.cpu, "state", None)
+                cpu_hp = float(self.cpu.hp_pct())
+                is_grounded = (cpu_state == WrestlerState.GROUNDED)
+                wants_up = bool(is_grounded and cpu_hp >= float(CPU_GETUP_HEALTHY_PCT))
+                set_user = str(mv.get("set_user_state", ""))
+                is_getup = bool(is_grounded and set_user == "STANDING")
+                if wants_up and is_getup:
+                    score += float(CPU_GETUP_BONUS_HEALTHY)
+                if wants_up and str(mv.get("type", "Setup")) == "Strike" and (not is_getup):
+                    score -= float(CPU_UPKICK_PENALTY_WHEN_HEALTHY)
+                if is_grounded and str(name) == MOVE_REST:
+                    if cpu_hp <= float(CPU_REST_HURT_PCT) or int(self.cpu.grit) <= 1:
+                        score += float(CPU_REST_BONUS_WHEN_HURT)
+            except Exception:
+                pass
+
+            # Repetition penalty to prevent spamming.
+            if str(getattr(self.cpu, "last_move_name", None) or "") == str(name):
+                score -= 15.0
+
+            # Stale avoidance.
+            try:
+                if self._would_be_stale(self.cpu, str(name)):
+                    score -= float(int(STALE_CLASH_SCORE_PENALTY)) * 8.0
+            except Exception:
+                pass
+
+            # Low-HP behavior: avoid random panic; just slightly bias toward cheaper actions.
+            try:
+                if float(self.cpu.hp_pct()) < 0.30 and int(mv.get("cost", 0)) == 0:
+                    score += 6.0
+            except Exception:
+                pass
+
+            score += float(random.randint(0, 4))
+            return score
+
+        # Evaluate joint move+cards options.
+        scored_moves: list[tuple[float, str, list[dict]]] = []
+        for m in valid:
+            cands = self._cpu_card_candidates_for_move(str(m))
+            if str(m) == MOVE_REST:
+                best = 0
+            else:
+                if not cands:
+                    continue
+                best = int(cands[0].get("score", 0))
+
+            action_score = float(move_value(str(m))) + float(best)
+            scored_moves.append((action_score, str(m), cands))
+
+        if not scored_moves:
+            return (MOVE_REST, [])
+
+        scored_moves.sort(key=lambda t: float(t[0]), reverse=True)
+        ordered = scored_moves
+
+        if mode == "GREED":
+            pick = ordered[0]
+        elif mode == "GOOD":
+            pick = random.choice(ordered[: min(3, len(ordered))])
+        elif mode == "BAD":
+            tail = ordered[max(0, len(ordered) - 3) :]
+            pick = random.choice(tail or ordered)
+        else:
+            top_n = max(1, min(int(CPU_RND_PICK_FROM_TOP_N), len(ordered)))
+            pick = random.choice(ordered[:top_n])
+
+        _score, move, cands = pick
+        if str(move) == MOVE_REST:
+            return (MOVE_REST, [])
+        if str(move) == MOVE_DEFENSIVE and not cands:
+            return (MOVE_DEFENSIVE, [])
+        if not cands:
+            return (MOVE_REST, [])
+
+        # Pick cards (mode influences greediness).
+        if mode == "GREED":
+            cards = list(cands[0].get("cards") or [])
+        elif mode == "GOOD":
+            pool = cands[: min(3, len(cands))]
+            cards = list(random.choice(pool).get("cards") or [])
+        elif mode == "BAD":
+            pool = cands[max(0, len(cands) - 3) :]
+            cards = list(random.choice(pool or cands).get("cards") or [])
+        else:
+            top_n = max(1, min(int(CPU_RND_PICK_FROM_TOP_N), len(cands)))
+            cards = list(random.choice(cands[:top_n]).get("cards") or [])
+
+        return (str(move), cards)
+
     def _cpu_choose_move(self, *, mode: str | None = None):
         if bool(getattr(self.cpu, "is_groggy", False)):
             if self._move_is_legal(MOVE_GROGGY_RECOVERY, self.cpu, self.player) and self._passes_moveset(self.cpu, MOVE_GROGGY_RECOVERY):
@@ -3762,15 +4068,6 @@ class WrestleApp(App):
             pass
 
         mode = str(mode or self._cpu_ai_mode())
-
-        # Desperation override: low HP tries cheap options.
-        try:
-            if float(self.cpu.hp_pct()) < 0.30:
-                panic = [m for m in valid if int(MOVES.get(m, {}).get("cost", 0)) == 0]
-                if panic:
-                    return random.choice(panic)
-        except Exception:
-            pass
 
         def type_bonus_for(name: str, mv: dict) -> int:
             # Smart defaults ONLY when ai_score is missing.
@@ -5286,25 +5583,14 @@ class WrestleApp(App):
         self._cpu_buy_buffs()
         cpu_mode = self._cpu_ai_mode()
         self._last_cpu_mode = str(cpu_mode)
-        c_move = self._cpu_choose_move(mode=cpu_mode)
-        c_cards = self._cpu_choose_cards(c_move, mode=cpu_mode)
-        # Degrade AI card choice if it somehow can't afford.
-        c_total = self._effective_cost(self.cpu, c_move, c_cards)
-        if int(self.cpu.grit) < int(c_total):
-            hand = list(self.cpu.hand or [])
-            hand.sort(key=lambda c: int(c.value))
-            c_cards = []
-            for c in hand:
-                if c_move == MOVE_DEFENSIVE and int(c.value) > 5:
-                    continue
-                test = self._effective_cost(self.cpu, c_move, [c])
-                if int(self.cpu.grit) >= int(test):
-                    c_cards = [c]
-                    break
-
-            # Defensive is allowed to play 0 cards.
-            if c_move == MOVE_DEFENSIVE and not c_cards:
-                c_cards = []
+        c_move, c_cards = self._cpu_choose_action(mode=cpu_mode)
+        # Safety fallback: if something goes sideways, guarantee a legal/affordable action.
+        try:
+            c_total = self._effective_cost(self.cpu, c_move, c_cards)
+            if int(self.cpu.grit) < int(c_total):
+                c_move, c_cards = (MOVE_REST, [])
+        except Exception:
+            c_move, c_cards = (MOVE_REST, [])
 
         self._resolve_clash(self.selected_move, p_cards, c_move, c_cards)
 
