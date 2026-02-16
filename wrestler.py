@@ -288,6 +288,26 @@ class Wrestler:
         # Ensure baseline moves are always available (when using movesets).
         if self.moveset is not None:
             self.moveset = _dedupe_keep_order(list(BASE_MOVES_ALL_WRESTLERS) + list(self.moveset))
+
+            # Style-driven minimums: ensure certain "systems" actually show up
+            # across the roster without forcing them on every archetype.
+            try:
+                style = str(self.style or "").strip().lower()
+                wc = str(self.weight_class or "").strip().lower()
+
+                # Most non-giants can plausibly go up top; keep giants grounded.
+                if ("giant" not in style) and ("super" not in wc):
+                    if "air_climb_turnbuckle" not in set(self.moveset or []):
+                        self.moveset = _dedupe_keep_order(list(self.moveset) + ["air_climb_turnbuckle"])
+
+                # Technicians/grapplers/aces should have at least one basic submission.
+                wants_sub = any(k in style for k in ("tech", "grap", "ace"))
+                if wants_sub:
+                    if "sub_submission_hold" not in set(self.moveset or []):
+                        self.moveset = _dedupe_keep_order(list(self.moveset) + ["sub_submission_hold"])
+            except Exception:
+                pass
+
             try:
                 prof_traits = self.profile.get("ai_traits")
                 if isinstance(prof_traits, dict):

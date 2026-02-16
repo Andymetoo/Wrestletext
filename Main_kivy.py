@@ -2049,7 +2049,7 @@ class WrestleApp(App):
         user_dis = user.is_in_grapple() and (user.grapple_role == GrappleRole.DEFENSE)
 
         if user_dis:
-            if move_name not in {
+            baseline = {
                 MOVE_FIGHT_FOR_CONTROL,
                 MOVE_DEFENSIVE,
                 MOVE_REST,
@@ -2060,8 +2060,15 @@ class WrestleApp(App):
                 MOVE_GUT_PUNCH,
                 MOVE_FOREARM_CLUB,
                 MOVE_KNEE_TO_GUT,
-            }:
-                return False
+                "grap_wrist_escape",
+            }
+            if move_name not in baseline:
+                t = str(mv.get("type", "Setup"))
+                if not (
+                    str(ru) in {"GRAPPLE_DEFENSE", "GRAPPLE_ANY", "GRAPPLE_WEAK"}
+                    and t in {"Strike", "Setup"}
+                ):
+                    return False
 
         if move_name == MOVE_DEFENSIVE:
             if user_adv:
@@ -2145,6 +2152,13 @@ class WrestleApp(App):
         ignore_momentum_gate: bool = False,
         ignore_weight_gate: bool = False,
     ) -> list[str]:
+        # Safety: if we ever get into a broken grapple state (only one wrestler
+        # thinks they're in a grapple), silently break it so menus never empty.
+        try:
+            self._repair_grapple_desync()
+        except Exception:
+            pass
+
         names = [
             n
             for n in MOVES.keys()
@@ -3007,6 +3021,10 @@ class WrestleApp(App):
                     except Exception:
                         pass
                     loser.set_state(WrestlerState(on_loss_state))
+                    try:
+                        self._repair_grapple_desync()
+                    except Exception:
+                        pass
                     self._log(f"SPRAWL! {self._fmt_name(loser)} shoots in and gets stuffed — they're {on_loss_state}.")
             except Exception:
                 pass
@@ -3189,6 +3207,23 @@ class WrestleApp(App):
             self._log(f"Stunned... (Groggy: {int(who.groggy_meter)} left)")
 
     def _begin_escape(self, *, attacker: Wrestler, defender: Wrestler, kind: str, move_name: str | None = None) -> None:
+        # Escape sequences are their own interaction; don't overlap with Groggy.
+        # (Being pinned/caught in a hold should not also force Groggy Recovery.)
+        try:
+            if bool(getattr(defender, "is_groggy", False)):
+                defender.is_groggy = False
+                defender.groggy_meter = 0
+        except Exception:
+            pass
+
+        # Ensure the defender can actually perform the 3-card escape interaction.
+        # "No redraw" means no redraw DURING the attempt, not "you might have 0 cards".
+        try:
+            if int(len(list(defender.hand or []))) < 3:
+                defender.draw_to_full()
+        except Exception:
+            pass
+
         threshold = self._escape_threshold(defender.hp_pct())
         try:
             if str(kind).upper() == "PINFALL":
@@ -3661,6 +3696,12 @@ class WrestleApp(App):
             attacker.grapple_role = GrappleRole.OFFENSE
             defender.grapple_role = GrappleRole.DEFENSE
 
+        # Safety: prevent illegal grapple/grounded desync states.
+        try:
+            self._repair_grapple_desync()
+        except Exception:
+            pass
+
         # Combo chains: after a successful execution, open the follow-up window.
         chain_next = move.get("chain_next")
         if chain_next:
@@ -3673,6 +3714,48 @@ class WrestleApp(App):
     # -------------------------------------------------------------------------
     # HELPER LOGIC
     # -------------------------------------------------------------------------
+
+    def _repair_grapple_desync(self) -> None:
+        """Ensure grapple state is consistent (both in grapple or neither).
+
+        Safety net against edge-cases where one wrestler leaves a grapple via a
+        special transition but the other remains in a grapple tier/role.
+        """
+        try:
+            p = self.player
+            c = self.cpu
+        except Exception:
+            return
+        if not isinstance(p, Wrestler) or not isinstance(c, Wrestler):
+            return
+
+        # Clear stale roles if a wrestler isn't actually in a grapple tier.
+        for w in (p, c):
+            try:
+                if (not bool(w.is_in_grapple())) and getattr(w, "grapple_role", None) is not None:
+                    w.grapple_role = None
+            except Exception:
+                pass
+
+        try:
+            p_in = bool(p.is_in_grapple())
+            c_in = bool(c.is_in_grapple())
+        except Exception:
+            return
+
+        if p_in == c_in:
+            return
+
+        # If only one side is in a grapple tier, break the grapple.
+        try:
+            if p_in:
+                p.clear_grapple()
+                p.set_state(WrestlerState.STANDING)
+            if c_in:
+                c.clear_grapple()
+                c.set_state(WrestlerState.STANDING)
+        except Exception:
+            pass
 
     def _cpu_buy_buffs(self) -> None:
         """Spend CPU hype on buffs before selecting a move."""
@@ -3920,9 +4003,9 @@ class WrestleApp(App):
             mtype = str(mv.get("type", "Setup"))
 
             if mtype == "Pin":
-                return 20
+                return 6
             if mtype == "Submission":
-                return 15
+                return 8
             if mtype == "Grapple" and raw_damage == 0:
                 return 12
             if mtype == "Aerial" and raw_damage == 0:
@@ -3937,6 +4020,41 @@ class WrestleApp(App):
             manual = int(mv.get("ai_score", 0))
             bonus = int(type_bonus_for(name, mv))
             score = float(dmg + manual + bonus)
+
+            # Pin/submission context: avoid early pin spam; ramp up as HP drops.
+            try:
+                mtype = str(mv.get("type", "Setup"))
+                opp_hp = float(self.player.hp_pct())
+                if mtype == "Pin":
+                    if opp_hp >= 0.70:
+                        score -= 28.0
+                    elif opp_hp >= 0.50:
+                        score -= 16.0
+                    elif opp_hp >= 0.35:
+                        score -= 6.0
+                    elif opp_hp >= 0.20:
+                        score += 4.0
+                    else:
+                        score += 14.0
+                    if bool(getattr(self.player, "is_groggy", False)) or int(getattr(self.player, "daze_turns", 0) or 0) > 0:
+                        score += 8.0
+                elif mtype == "Submission":
+                    if opp_hp >= 0.70:
+                        score -= 10.0
+                    elif opp_hp <= 0.25:
+                        score += 8.0
+            except Exception:
+                pass
+
+            # Top rope: prefer climbing when the opponent is down (safer).
+            try:
+                if str(mv.get("set_user_state", "")) == "TOP_ROPE":
+                    if getattr(self.player, "state", None) == WrestlerState.GROUNDED:
+                        score += 12.0
+                    else:
+                        score -= 8.0
+            except Exception:
+                pass
 
             # Anti-turtle: Defensive should be situational, not a default action.
             try:
@@ -4078,9 +4196,9 @@ class WrestleApp(App):
             mtype = str(mv.get("type", "Setup"))
 
             if mtype == "Pin":
-                return 20
+                return 6
             if mtype == "Submission":
-                return 15
+                return 8
             if mtype == "Grapple" and raw_damage == 0:
                 return 12
             if mtype == "Aerial" and raw_damage == 0:
@@ -4095,6 +4213,41 @@ class WrestleApp(App):
             manual = int(mv.get("ai_score", 0))
             bonus = int(type_bonus_for(name, mv))
             score = float(dmg + manual + bonus)
+
+            # Pin/submission context: avoid early pin spam; ramp up as HP drops.
+            try:
+                mtype = str(mv.get("type", "Setup"))
+                opp_hp = float(self.player.hp_pct())
+                if mtype == "Pin":
+                    if opp_hp >= 0.70:
+                        score -= 28.0
+                    elif opp_hp >= 0.50:
+                        score -= 16.0
+                    elif opp_hp >= 0.35:
+                        score -= 6.0
+                    elif opp_hp >= 0.20:
+                        score += 4.0
+                    else:
+                        score += 14.0
+                    if bool(getattr(self.player, "is_groggy", False)) or int(getattr(self.player, "daze_turns", 0) or 0) > 0:
+                        score += 8.0
+                elif mtype == "Submission":
+                    if opp_hp >= 0.70:
+                        score -= 10.0
+                    elif opp_hp <= 0.25:
+                        score += 8.0
+            except Exception:
+                pass
+
+            # Top rope: prefer climbing when the opponent is down (safer).
+            try:
+                if str(mv.get("set_user_state", "")) == "TOP_ROPE":
+                    if getattr(self.player, "state", None) == WrestlerState.GROUNDED:
+                        score += 12.0
+                    else:
+                        score -= 8.0
+            except Exception:
+                pass
 
             # Anti-turtle: Defensive should be situational, not a default action.
             try:
